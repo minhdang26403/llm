@@ -37,3 +37,9 @@ llm-from-scratch/
 
 ## Dataset
 TinyStories
+
+## Unit Tests
+
+```bash
+pytest -q tests/attention_test.py
+```
