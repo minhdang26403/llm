@@ -3,6 +3,8 @@ import math
 import torch
 import torch.nn as nn
 
+from layers.dropout import Dropout
+
 
 class MultiheadAttention(nn.Module):
     """
@@ -19,7 +21,7 @@ class MultiheadAttention(nn.Module):
         max_seq_len: Maximum sequence length
         num_heads: Number of parallel attention heads.
         num_kv_heads: Number of key/value heads. If None, defaults to ``num_heads``
-        qkv_bias: Whether to use bias in Q/K/V projection layers.
+        bias: Whether to use bias in input / output projection layers.
     """
 
     def __init__(
@@ -28,7 +30,8 @@ class MultiheadAttention(nn.Module):
         max_seq_len: int,
         num_heads: int,
         num_kv_heads: int | None = None,
-        qkv_bias: bool = False,
+        dropout_rate: float = 0.0,
+        bias: bool = False,
     ):
         super().__init__()
 
@@ -48,12 +51,14 @@ class MultiheadAttention(nn.Module):
         kv_dim = self.num_kv_heads * self.head_dim
 
         # Projection layers.
-        self.q_proj = nn.Linear(embed_dim, embed_dim, bias=qkv_bias)
-        self.k_proj = nn.Linear(embed_dim, kv_dim, bias=qkv_bias)
-        self.v_proj = nn.Linear(embed_dim, kv_dim, bias=qkv_bias)
+        self.q_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.k_proj = nn.Linear(embed_dim, kv_dim, bias=bias)
+        self.v_proj = nn.Linear(embed_dim, kv_dim, bias=bias)
+
+        self.dropout = Dropout(dropout_rate)
 
         # Output projection after concatenating query heads.
-        self.out_proj = nn.Linear(embed_dim, embed_dim, bias=False)
+        self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
 
         self.register_buffer(
             "mask", torch.tril(torch.ones(max_seq_len, max_seq_len, dtype=torch.bool))
@@ -99,6 +104,7 @@ class MultiheadAttention(nn.Module):
 
         # 5) Normalize scores into attention weights.
         attn_weights = attn_scores.softmax(dim=-1)
+        attn_weights = self.dropout(attn_weights)
 
         # 6) Multiply attention weights by values.
         # Shape: (B, num_heads, N, head_dim)
