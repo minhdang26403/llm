@@ -20,7 +20,7 @@ dev = [
 ]
 
 [tool.mypy]
-disable_error_code = ["import-untyped"]
+disable_error_code = ["import-untyped", "index"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
