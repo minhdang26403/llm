@@ -22,9 +22,6 @@ class LayerNorm(nn.Module):
 
         return (x - mean) / torch.sqrt(var + self.eps) * self.weight + self.bias
 
-    def __call__(self, x: torch.Tensor) -> torch.Tensor:
-        return self.forward(x)
-
 
 class RMSNorm(nn.Module):
     def __init__(self, normalized_shape: int | list[int], eps=None):
@@ -44,6 +41,3 @@ class RMSNorm(nn.Module):
         rms = torch.sqrt(eps + torch.mean(x**2, dim=self.normalized_dim, keepdim=True))
 
         return x / rms * self.weight
-
-    def __call__(self, x: torch.Tensor) -> torch.Tensor:
-        return self.forward(x)
