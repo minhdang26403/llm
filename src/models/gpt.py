@@ -16,13 +16,14 @@ class GPTBlock(nn.Module):
             config.embed_dim,
             config.max_seq_len,
             config.num_heads,
-            config.num_heads,
+            num_kv_heads=config.num_heads,
+            dropout_rate=config.attn_pdrop,
         )
         self.ln_2 = LayerNorm(config.embed_dim)
-        self.mlp = nn.Sequential(
-            nn.Linear(config.embed_dim, config.mlp_dim, bias=False),
+        self.ffn = nn.Sequential(
+            nn.Linear(config.embed_dim, config.ffn_dim, bias=False),
             nn.GELU(),
-            nn.Linear(config.mlp_dim, config.embed_dim, bias=False),
+            nn.Linear(config.ffn_dim, config.embed_dim, bias=False),
         )
         self.dropout = Dropout(config.dropout_rate)
 
@@ -32,9 +33,9 @@ class GPTBlock(nn.Module):
         x = self.ln_1(x)
         x = x + self.dropout(self.attn(x))
 
-        # 2. Computation Phase (MLP)
+        # 2. Computation Phase (FeedForward Network)
         x = self.ln_2(x)
-        x = x + self.dropout(self.mlp(x))
+        x = x + self.dropout(self.ffn(x))
         return x
 
 
