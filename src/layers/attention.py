@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 
 from layers.dropout import Dropout
+from layers.positional_embedding import RotaryPositionalEmbedding
 
 
 class MultiheadAttention(nn.Module):
@@ -32,6 +33,7 @@ class MultiheadAttention(nn.Module):
         num_kv_heads: int | None = None,
         dropout_rate: float = 0.0,
         bias: bool = False,
+        rope: RotaryPositionalEmbedding | None = None,
     ):
         super().__init__()
 
@@ -56,6 +58,7 @@ class MultiheadAttention(nn.Module):
         self.v_proj = nn.Linear(embed_dim, kv_dim, bias=bias)
 
         self.dropout = Dropout(dropout_rate)
+        self.rope = rope
 
         # Output projection after concatenating query heads.
         self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
@@ -83,6 +86,10 @@ class MultiheadAttention(nn.Module):
             .view(batch_size, seq_len, self.num_kv_heads, self.head_dim)
             .transpose(1, 2)
         )
+
+        if self.rope:
+            q = self.rope(q)
+            k = self.rope(k)
 
         # 2) If using GQA/MQA, expand KV heads so they align with query heads.
         # For each kv head, repeat it `num_queries_per_kv` times.
