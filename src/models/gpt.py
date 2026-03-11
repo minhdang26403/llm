@@ -16,7 +16,7 @@ class GPTBlock(nn.Module):
             config.embed_dim,
             config.max_seq_len,
             config.num_heads,
-            config.num_kv_heads,
+            config.num_heads,
         )
         self.ln_2 = LayerNorm(config.embed_dim)
         self.mlp = nn.Sequential(
