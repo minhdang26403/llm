@@ -10,5 +10,5 @@ dist/
 .DS_Store
 checkpoints/
 outputs/
-data/raw/
-data/processed/
+data/
+weights/
