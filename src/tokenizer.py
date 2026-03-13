@@ -1,4 +1,5 @@
 import heapq
+import json
 import mmap
 from collections import Counter, defaultdict
 from multiprocessing import Pool
@@ -203,11 +204,7 @@ def _apply_merge_in_place(
     i = 0
     write_idx = 0
     while i < len(ids):
-        if (
-            i < len(ids) - 1
-            and ids[i] == best_pair[0]
-            and ids[i + 1] == best_pair[i + 1]
-        ):
+        if i < len(ids) - 1 and ids[i] == best_pair[0] and ids[i + 1] == best_pair[1]:
             ids[write_idx] = new_id
             i += 2
         else:
@@ -221,12 +218,12 @@ def _apply_merge_in_place(
 class Tokenizer:
     def __init__(
         self,
-        file_path: str | Path,
+        file_path: str | Path | None,
         vocab_size: int,
         special_tokens: dict[str, TokenId] | None = None,
         num_workers: int = 4,
     ):
-        self.file_path = Path(file_path)
+        self.file_path = Path(file_path) if file_path else None
         self.vocab_size = vocab_size
         if vocab_size < BASE_VOCAB_SIZE:
             raise ValueError(
@@ -259,6 +256,11 @@ class Tokenizer:
             self.special_tokens
         )
 
+        # Used by decode(); includes byte vocab (+ merges once learned)
+        # and special tokens.
+        self.unified_vocab: dict[TokenId, bytes] = {}
+        self._merge_vocab()
+
         # FIFO cache for encode_word results; improves repeated encode calls.
         self.cache: dict[str, tuple[TokenId, ...]] = {}
         self.max_cache_size = 32768
@@ -287,6 +289,9 @@ class Tokenizer:
         Returns:
             None. Populates self.merge_rules and self.vocab; calls merge_vocab().
         """
+        if self.file_path is None:
+            raise ValueError("file_path must be provided to train tokenizer")
+
         boundaries = _get_worker_segment_boundaries(
             self.file_path, self.special_tokens, self.num_workers
         )
@@ -325,7 +330,7 @@ class Tokenizer:
             self.merge_rules[best_pair] = new_id
 
             # Only words containing best_pair can change after this merge.
-            affected_indices = pair_map[best_pair]
+            affected_indices = list(pair_map[best_pair])
             for idx in affected_indices:
                 word_ids = encoded_words[idx]
                 freq = word_freqs[idx]
@@ -363,6 +368,83 @@ class Tokenizer:
                         pair_map.pop(pair)
 
         self._merge_vocab()
+
+    def save(self, save_path: str | Path) -> None:
+        """Save tokenizer state to disk.
+
+        Args:
+            save_path: Target JSON file path, typically under `weights/`.
+        """
+        path = Path(save_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        merge_rules_serialized = [
+            [pair[0], pair[1], token_id]
+            for pair, token_id in sorted(
+                self.merge_rules.items(), key=lambda item: item[1]
+            )
+        ]
+        payload = {
+            "format_version": 1,
+            "vocab_size": self.vocab_size,
+            "special_tokens": self.special_tokens,
+            "num_workers": self.num_workers,
+            "merge_rules": merge_rules_serialized,
+        }
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+    @classmethod
+    def load(
+        cls,
+        load_path: str | Path,
+        file_path: str | Path | None = None,
+        num_workers: int | None = None,
+    ) -> "Tokenizer":
+        """Load a tokenizer checkpoint and reconstruct vocab/merge rules.
+
+        Args:
+            load_path: Path to tokenizer checkpoint created by `save()`.
+            file_path: Optional corpus path for future re-training.
+            num_workers: Optional override for workers when re-training.
+        """
+        path = Path(load_path)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if payload.get("format_version") != 1:
+            raise ValueError(
+                f"Unsupported tokenizer format_version={payload.get('format_version')}"
+            )
+
+        resolved_num_workers = (
+            num_workers if num_workers is not None else payload.get("num_workers", 4)
+        )
+        special_tokens = {
+            token: int(token_id)
+            for token, token_id in payload.get("special_tokens", {}).items()
+        }
+        tokenizer = cls(
+            file_path=file_path,
+            vocab_size=int(payload["vocab_size"]),
+            special_tokens=special_tokens,
+            num_workers=int(resolved_num_workers),
+        )
+
+        tokenizer.merge_rules = {}
+        tokenizer.vocab = {id: bytes([id]) for id in range(BASE_VOCAB_SIZE)}
+        for left, right, token_id in sorted(
+            payload.get("merge_rules", []), key=lambda item: int(item[2])
+        ):
+            pair = (int(left), int(right))
+            new_id = int(token_id)
+            tokenizer.merge_rules[pair] = new_id
+            tokenizer.vocab[new_id] = (
+                tokenizer.vocab[pair[0]] + tokenizer.vocab[pair[1]]
+            )
+
+        tokenizer._merge_vocab()
+        tokenizer.cache.clear()
+        return tokenizer
 
     def _encode_word(self, word: str) -> tuple[TokenId, ...]:
         """Encode a single pre-tokenized word into token ids using merge rules.
