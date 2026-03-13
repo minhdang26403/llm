@@ -1,11 +1,10 @@
 """CLI utility to train and save the BPE tokenizer."""
 
 import argparse
-from pathlib import Path
 import time
+from pathlib import Path
 
 from tokenizer import Tokenizer
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_PATH = REPO_ROOT / "weights" / "bpe_tokenizer.json"
@@ -48,10 +47,16 @@ def main() -> None:
     if not dataset_path.is_file():
         raise ValueError(f"Dataset path must be a file: {dataset_path}")
 
+    special_tokens_list = ["<|endoftext|>", "<|im_start|>", "<|im_end|>", "<|im_sep|>"]
+    special_tokens_dict = {
+        token: args.vocab_size + i + 1 for i, token in enumerate(special_tokens_list)
+    }
+
     tokenizer = Tokenizer(
         file_path=dataset_path,
         vocab_size=args.vocab_size,
         num_workers=args.num_workers,
+        special_tokens=special_tokens_dict,
     )
     train_start = time.perf_counter()
     tokenizer.train(verbose=args.verbose)
