@@ -2,6 +2,7 @@
 
 import argparse
 from pathlib import Path
+import time
 
 from tokenizer import Tokenizer
 
@@ -31,6 +32,11 @@ def parse_args() -> argparse.Namespace:
         default=4,
         help="Number of worker processes used during pretokenization (default: 4).",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Print periodic tokenizer training progress.",
+    )
     return parser.parse_args()
 
 
@@ -47,10 +53,13 @@ def main() -> None:
         vocab_size=args.vocab_size,
         num_workers=args.num_workers,
     )
-    tokenizer.train()
+    train_start = time.perf_counter()
+    tokenizer.train(verbose=args.verbose)
+    train_seconds = time.perf_counter() - train_start
     tokenizer.save(DEFAULT_OUTPUT_PATH)
 
     print(f"Tokenizer trained from: {dataset_path}")
+    print(f"Training time: {train_seconds:.2f}s")
     print(f"Tokenizer weights saved to: {DEFAULT_OUTPUT_PATH}")
 
 

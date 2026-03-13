@@ -1,6 +1,7 @@
 import heapq
 import json
 import mmap
+import time
 from collections import Counter, defaultdict
 from multiprocessing import Pool
 from pathlib import Path
@@ -276,7 +277,37 @@ class Tokenizer:
         """
         self.unified_vocab = {**self.vocab, **self.inverse_special_tokens}
 
-    def train(self) -> None:
+    def _maybe_log_training_progress(
+        self,
+        *,
+        verbose: bool,
+        num_merges: int,
+        merges_done: int,
+        progress_interval: int,
+        train_start: float,
+        pair_counts: defaultdict[TokenPair, int],
+    ) -> None:
+        """Print periodic training progress when verbose mode is enabled."""
+        if not verbose or num_merges <= 0:
+            return
+        should_log = (
+            merges_done % progress_interval == 0
+            or merges_done == num_merges
+            or not pair_counts
+        )
+        if not should_log:
+            return
+
+        elapsed = time.perf_counter() - train_start
+        pct = (merges_done / num_merges) * 100
+        print(
+            "Tokenizer training progress: "
+            f"{merges_done}/{num_merges} merges ({pct:.1f}%), "
+            f"current_vocab_size={len(self.vocab)}, "
+            f"elapsed={elapsed:.2f}s"
+        )
+
+    def train(self, verbose: bool = False) -> None:
         """Learn merge rules using parallel pretokenization and in-place merges.
 
         Splits corpus into segments, pretokenizes in parallel, merges counts,
@@ -292,6 +323,9 @@ class Tokenizer:
         if self.file_path is None:
             raise ValueError("file_path must be provided to train tokenizer")
 
+        train_start = time.perf_counter()
+
+        stage1_start = time.perf_counter()
         boundaries = _get_worker_segment_boundaries(
             self.file_path, self.special_tokens, self.num_workers
         )
@@ -299,17 +333,48 @@ class Tokenizer:
             (self.file_path, start, end, self.special_tokens)
             for start, end in zip(boundaries, boundaries[1:])
         ]
+        if verbose:
+            stage1_elapsed = time.perf_counter() - stage1_start
+            print(
+                "Tokenizer stage [1/3] segmentation completed: "
+                f"segments={len(segments)}, elapsed={stage1_elapsed:.2f}s"
+            )
 
+        stage2_start = time.perf_counter()
         with Pool(self.num_workers) as p:
             word_counts_list = p.map(_pretokenize_worker, segments)
+        if verbose:
+            stage2_elapsed = time.perf_counter() - stage2_start
+            print(
+                "Tokenizer stage [2/3] pretokenization completed: "
+                f"workers={self.num_workers}, elapsed={stage2_elapsed:.2f}s"
+            )
 
+        stage3_start = time.perf_counter()
         encoded_words, word_freqs, pair_counts, pair_map = _merge_word_counts(
             word_counts_list
         )
         heap = [(-count, pair) for pair, count in pair_counts.items()]
         heapq.heapify(heap)
+        if verbose:
+            stage3_elapsed = time.perf_counter() - stage3_start
+            print(
+                "Tokenizer stage [3/3] in-memory structures completed: "
+                f"unique_words={len(encoded_words)}, "
+                f"unique_pairs={len(pair_counts)}, "
+                f"elapsed={stage3_elapsed:.2f}s"
+            )
 
         num_merges = self.vocab_size - len(self.vocab)
+        progress_interval = max(100, num_merges // 20) if num_merges > 0 else 1
+        if verbose:
+            print(
+                "Starting tokenizer merge loop: "
+                f"target_vocab_size={self.vocab_size}, "
+                f"planned_merges={num_merges}, "
+                f"progress_interval={progress_interval}"
+            )
+
         for _ in range(num_merges):
             if not pair_counts:
                 break
@@ -367,7 +432,24 @@ class Tokenizer:
                         del pair_counts[pair]
                         pair_map.pop(pair)
 
+            merges_done = len(self.vocab) - BASE_VOCAB_SIZE
+            self._maybe_log_training_progress(
+                verbose=verbose,
+                num_merges=num_merges,
+                merges_done=merges_done,
+                progress_interval=progress_interval,
+                train_start=train_start,
+                pair_counts=pair_counts,
+            )
+
         self._merge_vocab()
+        if verbose:
+            elapsed = time.perf_counter() - train_start
+            print(
+                "Tokenizer training completed: "
+                f"final_vocab_size={len(self.vocab)}, "
+                f"elapsed={elapsed:.2f}s"
+            )
 
     def save(self, save_path: str | Path) -> None:
         """Save tokenizer state to disk.
