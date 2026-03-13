@@ -5,10 +5,11 @@ from layers.activation import SwiGLU
 from layers.attention import MultiheadAttention
 from layers.norm import RMSNorm
 from layers.positional_embedding import RotaryPositionalEmbedding
+from models.config import LlamaConfig
 
 
 class LlamaBlock(nn.Module):
-    def __init__(self, config, rope: RotaryPositionalEmbedding):
+    def __init__(self, config: LlamaConfig, rope: RotaryPositionalEmbedding):
         super().__init__()
 
         self.rms_norm_1 = RMSNorm(config.embed_dim, eps=1e-5)
@@ -22,7 +23,7 @@ class LlamaBlock(nn.Module):
             config.embed_dim,
             config.max_seq_len,
             config.num_heads,
-            num_kv_heads=config.num_heads,
+            num_kv_heads=config.num_kv_heads,
             dropout_rate=config.attn_pdrop,
             rope=rope,
         )
@@ -36,7 +37,7 @@ class LlamaBlock(nn.Module):
 
 
 class Llama(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config: LlamaConfig):
         super().__init__()
 
         self.token_embedding = nn.Embedding(config.vocab_size, config.embed_dim)

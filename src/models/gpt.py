@@ -5,10 +5,11 @@ from layers.attention import MultiheadAttention
 from layers.dropout import Dropout
 from layers.norm import LayerNorm
 from layers.positional_embedding import SinusoidalEmbedding
+from models.config import GPTConfig
 
 
 class GPTBlock(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config: GPTConfig):
         super().__init__()
 
         self.ln_1 = LayerNorm(config.embed_dim)
@@ -16,7 +17,7 @@ class GPTBlock(nn.Module):
             config.embed_dim,
             config.max_seq_len,
             config.num_heads,
-            num_kv_heads=config.num_heads,
+            num_kv_heads=config.num_kv_heads,
             dropout_rate=config.attn_pdrop,
         )
         self.ln_2 = LayerNorm(config.embed_dim)
@@ -40,7 +41,7 @@ class GPTBlock(nn.Module):
 
 
 class GPT(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config: GPTConfig):
         super().__init__()
 
         self.token_embedding = nn.Embedding(config.vocab_size, config.embed_dim)
