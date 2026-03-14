@@ -59,7 +59,7 @@ def _split_text_by_special_tokens(
     return special_tokens_pattern.split(text)
 
 
-def _get_worker_segment_boundaries(
+def get_worker_segment_boundaries(
     file_path: Path, special_tokens: dict[str, TokenId], num_desired_chunks: int
 ) -> list[int]:
     """Find byte boundaries to split the corpus for parallel workers.
@@ -264,7 +264,7 @@ class Tokenizer:
 
         # FIFO cache for encode_word results; improves repeated encode calls.
         self.cache: dict[str, tuple[TokenId, ...]] = {}
-        self.max_cache_size = 32768
+        self.max_cache_size = 65536
 
     def _merge_vocab(self) -> None:
         """Build a unified vocab for fast decode lookup.
@@ -326,7 +326,7 @@ class Tokenizer:
         train_start = time.perf_counter()
 
         stage1_start = time.perf_counter()
-        boundaries = _get_worker_segment_boundaries(
+        boundaries = get_worker_segment_boundaries(
             self.file_path, self.special_tokens, self.num_workers
         )
         segments = [
