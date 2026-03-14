@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import torch
 from torch.utils.data import Dataset
 
@@ -5,7 +7,10 @@ from tokenizer import Tokenizer
 
 
 class TextDataset(Dataset):
-    def __init__(self, file_path, tokenizer: Tokenizer, max_seq_len):
+    def __init__(self, file_path: str | Path, tokenizer: Tokenizer, max_seq_len: int):
+        if max_seq_len <= 0:
+            raise ValueError("max_seq_len must be positive")
+
         with open(file_path, "r", encoding="utf-8") as f:
             text = f.read()
 
@@ -13,14 +18,14 @@ class TextDataset(Dataset):
         # PyTorch requires indices into the embedding table to be long integers
         self.token_ids = torch.tensor(tokenizer.encode(text), dtype=torch.long)
 
-    def __len__(self):
+    def __len__(self) -> int:
         return (len(self.token_ids) - 1) // self.max_seq_len
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
         start = index * self.max_seq_len
         end = start + self.max_seq_len
 
-        input = self.token_ids[start:end]
-        target = self.token_ids[start + 1 : end + 1]
+        inputs = self.token_ids[start:end]
+        targets = self.token_ids[start + 1 : end + 1]
 
-        return input, target
+        return inputs, targets
