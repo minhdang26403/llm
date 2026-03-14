@@ -14,7 +14,6 @@ from dataset import TextDataset
 from models.config import GPTConfig, LlamaConfig, ModelConfig
 from models.gpt import GPT
 from models.llama import Llama
-from tokenizer import Tokenizer
 
 
 def parse_args() -> argparse.Namespace:
@@ -26,12 +25,6 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help="Optional validation dataset text file.",
-    )
-    parser.add_argument(
-        "--tokenizer-path",
-        type=Path,
-        default=Path("weights/bpe_tokenizer.json"),
-        help="Tokenizer checkpoint path.",
     )
     parser.add_argument("--num-epochs", type=int, default=1, help="Training epochs.")
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size.")
@@ -72,15 +65,6 @@ def validate_training_args(args: argparse.Namespace) -> None:
         raise ValueError("--val-every must be > 0")
     if args.learning_rate <= 0:
         raise ValueError("--learning-rate must be > 0")
-
-
-def load_tokenizer(tokenizer_path: Path) -> Tokenizer:
-    if not tokenizer_path.exists():
-        raise RuntimeError(
-            f"Tokenizer weights not found at {tokenizer_path}. "
-            "Run train_tokenizer.py first."
-        )
-    return Tokenizer.load(tokenizer_path)
 
 
 def create_model_and_config(model_name: str) -> tuple[nn.Module, ModelConfig]:
@@ -156,9 +140,7 @@ def main() -> None:
     args = parse_args()
     validate_training_args(args)
 
-    tokenizer = load_tokenizer(args.tokenizer_path)
     model, config = create_model_and_config(args.model_name)
-    config.vocab_size = max(tokenizer.unified_vocab.keys()) + 1
 
     num_params = sum(p.numel() for p in model.parameters())
     print(f"Selected model: {args.model_name}")
@@ -174,7 +156,7 @@ def main() -> None:
     model.train()
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    train_dataset = TextDataset(args.dataset_path, tokenizer, config.max_seq_len)
+    train_dataset = TextDataset(args.dataset_path, config.max_seq_len)
     if len(train_dataset) == 0:
         raise RuntimeError(
             "Training dataset is too short for the configured max_seq_len. "
@@ -184,7 +166,7 @@ def main() -> None:
 
     val_loader: DataLoader | None = None
     if args.val_dataset_path is not None:
-        val_dataset = TextDataset(args.val_dataset_path, tokenizer, config.max_seq_len)
+        val_dataset = TextDataset(args.val_dataset_path, config.max_seq_len)
         val_loader = build_dataloader(val_dataset, args, device, shuffle=False)
 
     optimizer = AdamW(
