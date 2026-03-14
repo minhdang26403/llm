@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from typing import Literal
 
-
 RopeScalingType = Literal["", "linear", "ntk"]
 
 
