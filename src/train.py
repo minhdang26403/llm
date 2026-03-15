@@ -19,12 +19,16 @@ from models.llama import Llama
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train a large language model.")
     parser.add_argument("model_name", choices=["gpt", "llama"], help="Model family.")
-    parser.add_argument("dataset_path", type=Path, help="Training dataset text file.")
+    parser.add_argument(
+        "dataset_path",
+        type=Path,
+        help="Training dataset .bin file (uint32 token ids).",
+    )
     parser.add_argument(
         "--val-dataset-path",
         type=Path,
         default=None,
-        help="Optional validation dataset text file.",
+        help="Optional validation dataset .bin file (uint32 token ids).",
     )
     parser.add_argument("--num-epochs", type=int, default=1, help="Training epochs.")
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size.")
@@ -65,6 +69,16 @@ def validate_training_args(args: argparse.Namespace) -> None:
         raise ValueError("--val-every must be > 0")
     if args.learning_rate <= 0:
         raise ValueError("--learning-rate must be > 0")
+    _validate_bin_file_arg(args.dataset_path, "dataset_path")
+    if args.val_dataset_path is not None:
+        _validate_bin_file_arg(args.val_dataset_path, "--val-dataset-path")
+
+
+def _validate_bin_file_arg(path: Path, arg_name: str) -> None:
+    if not path.exists() or not path.is_file():
+        raise ValueError(f"{arg_name} must be an existing file: {path}")
+    if path.suffix != ".bin":
+        raise ValueError(f"{arg_name} must be a .bin file")
 
 
 def create_model_and_config(model_name: str) -> tuple[nn.Module, ModelConfig]:
