@@ -125,21 +125,27 @@ The training scaffolding provides CLI arguments to select the model architecture
 Train a GPT variant:
 ```bash
 python src/train.py gpt \
-  --train-data data/TinyStoriesV2-GPT4-train.bin \
-  --valid-data data/TinyStoriesV2-GPT4-valid.bin \
+  data/TinyStoriesV2-GPT4-train.bin \
+  --val-dataset-path data/TinyStoriesV2-GPT4-valid.bin \
+  --num-workers 0 \
+  --batch-size 8 \
+  --num-epochs 4
 ```
 
 Train a Llama variant:
 ```bash
 python src/train.py llama \
-  --train-data data/TinyStoriesV2-GPT4-train.bin \
-  --valid-data data/TinyStoriesV2-GPT4-valid.bin \
+  data/TinyStoriesV2-GPT4-train.bin \
+  --val-dataset-path data/TinyStoriesV2-GPT4-valid.bin \
+  --num-workers 0 \
+  --batch-size 8 \
+  --num-epochs 4
 ```
 
 ### Validation & Checkpointing
 The training loop includes built-in scaffolding for periodic validation against the validation dataset and automatic checkpointing.
 
-During training, model weights, optimizer states, and the learning rate scheduler are saved directly to the `weights/` directory. These artifacts can be loaded later to resume training from an exact step or to perform offline text generation.
+During training, model checkpoints are saved to the `checkpoints/` directory by default (or a custom path via `--output-dir`). These artifacts can be loaded later to resume training from an exact step or to perform offline text generation.
 
 ## 🔮 Inference & Generation (Work in Progress)
 While the offline data pipeline and online training loops are fully operational, the inference engine is currently under active development.
