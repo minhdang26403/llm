@@ -1,31 +1,36 @@
 from pathlib import Path
 
+import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from tokenizer import Tokenizer
-
 
 class TextDataset(Dataset):
-    def __init__(self, file_path: str | Path, tokenizer: Tokenizer, max_seq_len: int):
+    def __init__(self, file_path: Path, max_seq_len: int):
         if max_seq_len <= 0:
             raise ValueError("max_seq_len must be positive")
 
-        with open(file_path, "r", encoding="utf-8") as f:
-            text = f.read()
-
+        # Numpy memmap handles the file descriptor and byte-translation automatically!
+        # It treats the binary file as a massive array of 32-bit integers.
+        self.data = np.memmap(file_path, dtype=np.uint32, mode="r")
         self.max_seq_len = max_seq_len
-        # PyTorch requires indices into the embedding table to be long integers
-        self.token_ids = torch.tensor(tokenizer.encode(text), dtype=torch.long)
+        self.num_elements = (len(self.data) - 1) // self.max_seq_len
 
     def __len__(self) -> int:
-        return (len(self.token_ids) - 1) // self.max_seq_len
+        return self.num_elements
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
         start = index * self.max_seq_len
-        end = start + self.max_seq_len
+        end = start + self.max_seq_len + 1
 
-        inputs = self.token_ids[start:end]
-        targets = self.token_ids[start + 1 : end + 1]
+        # Slice the numpy array (this is a zero-copy operation, incredibly fast)
+        chunk = self.data[start:end]
+
+        # PyTorch's CrossEntropyLoss and Embedding requires int64 (torch.long)
+        # We cast the numpy array to int64, then convert to a tensor
+        chunk_tensor = torch.tensor(chunk.astype(np.int64), dtype=torch.long)
+
+        inputs = chunk_tensor[:-1]
+        targets = chunk_tensor[1:]
 
         return inputs, targets
