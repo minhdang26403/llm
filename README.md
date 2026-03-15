@@ -1,106 +1,168 @@
 # Large Language Models from scratch
 
-This project implements common Large Language Models from scratch.
-
-## TODO
-- Tokenizer
-- Token Embedding
-- Positional Embedding
-- Transformer Block
-  - LayerNorm 1
-  - Causal Self-Attention
-  - LayerNorm 2
-  - MLP
+The project aims to implement Large Language Models from scratch. In addition, it also implements training and inference infrastructure, including Byte-Pair Encoding (BPE) tokenizer , data pipeline, training loop, KV cache, sampling, and text generation.
 
 ## Project Layout
 
-```
+```text
 llm-from-scratch/
-├── data/                  # Raw text files (e.g., tiny_shakespeare.txt)
-├── weights/               # Saved .pt or .safetensors checkpoints
+├── data/                           # Raw text and pretokenized .bin datasets
+├── perf/                           # Profiling artifacts and reports
 ├── src/
-│   ├── tokenizer.py       # Your BPE implementation
-│   ├── dataset.py         # PyTorch Dataset & DataLoader
-│   ├── models/            # Architecture definitions
-│   │   ├── base.py        # Shared config (n_layer, n_head, d_model)
-│   │   ├── gpt2.py        # GPT-2 implementation (MHA, Absolute Pos)
-│   │   └── llama.py       # Llama implementation (GQA, RoPE, RMSNorm)
-│   ├── layers/            # Reusable components
-│   │   ├── attention.py   # MHA, GQA, MLA classes
-│   │   ├── embeddings.py  # RoPE, Sinusoidal, Learned
-│   │   └── norms.py       # LayerNorm vs RMSNorm
-│   ├── train.py           # The Training Loop
-│   └── generate.py        # The Inference/Sampling Engine
-├── work_log.md            # Your notes on what worked/failed
-└── config.yaml            # Hyperparameters (batch_size, lr, etc.)
+│   ├── tokenizer.py                # BPE tokenizer (train/save/load/encode/decode)
+│   ├── train_tokenizer.py          # CLI to train and save tokenizer weights
+│   ├── prepare_data.py             # Offline pretokenization pipeline (.txt -> .bin)
+│   ├── prepare_data_workers.py     # Multiprocessing workers for pretokenization
+│   ├── dataset.py                  # Memmap dataset over pretokenized token IDs
+│   ├── train.py                    # Model training entrypoint (GPT/Llama)
+│   ├── models/
+│   │   ├── config.py               # Model config classes and defaults
+│   │   ├── gpt.py                  # GPT model and blocks
+│   │   └── llama.py                # Llama model and blocks
+│   └── layers/                     # Reusable building blocks
+│       ├── attention.py            # Causal attention, GQA/MQA support
+│       ├── positional_embedding.py # Sinusoidal + RoPE
+│       ├── norm.py                 # LayerNorm / RMSNorm
+│       ├── activation.py           # SwiGLU
+│       └── dropout.py              # Dropout layer
+├── tests/                          # Unit tests
+├── weights/                        # Saved tokenizer/model artifacts
+└── README.md
 ```
 
-## Dataset
-TinyStories
+## Dataset Introduction
 
-## Unit Tests
+The current development dataset is `TinyStoriesV2-GPT4`:
+- `data/TinyStoriesV2-GPT4-train.txt`
+- `data/TinyStoriesV2-GPT4-valid.txt`
+
+Pipeline:
+1. Train tokenizer on raw text.
+2. Pretokenize raw text into a contiguous binary file of token IDs (`uint32`).
+3. Train model by memory-mapping the binary file.
+
+## Key Features
+
+This project is interesting because:
+- It covers both **ML modeling** and **systems engineering**.
+- It is practical for experimentation with bottlenecks (CPU parsing, IPC, I/O, memory layout).
+- It demonstrates how offline preprocessing can simplify and accelerate online training.
+
+Implemented components:
+- BPE tokenizer:
+  - GPT-style pretokenization regex
+  - special-token support
+  - train/save/load/encode/decode
+  - training observability with stage timings and progress
+- Data preparation:
+  - safe chunk boundary splitting
+  - multiprocessing tokenization workers
+  - shard merge to final `.bin` token file
+- Dataset/data loading:
+  - `numpy.memmap`-based token streaming
+  - sequence slicing into `(inputs, targets)` pairs
+- Models:
+  - GPT and Llama variants
+  - configurable attention/head layout
+  - RoPE, RMSNorm, SwiGLU
+- Training scaffolding:
+  - CLI model selection
+  - optimizer + scheduler + gradient clipping
+  - optional validation and checkpointing
+- Test suite:
+  - attention, embedding, dropout, norm, tokenizer tests
+
+## Run Unit Tests
+
+Run all tests:
 
 ```bash
-pytest -q tests/attention_test.py
+pytest -q tests
 ```
 
-## Training Tokenizer
+Run a single suite:
+
+```bash
+pytest -q tests/tokenizer_test.py
+```
+
+## Train Tokenizer
+
+Example command:
+
 ```bash
 python src/train_tokenizer.py data/TinyStoriesV2-GPT4-train.txt --vocab-size 128256 --num-workers 12 --verbose
 ```
 
-## Tokenizer Training Observations
+Output:
+- tokenizer weights saved to `weights/bpe_tokenizer.json`
+- stage-wise timing + progress logs when `--verbose` is enabled
+
+### Tokenizer Training Result (Observed)
 
 Run setup:
 - Dataset: TinyStoriesV2-GPT4-train (~2.1GB)
 - Workers: 12
-- Target vocab size: 128,256 (Llama 3 scale)
-- Command:
-
-```bash
-python src/train_tokenizer.py data/TinyStoriesV2-GPT4-train.txt --vocab-size 128256 --num-workers 12 --verbose
-```
+- Target vocab size: 128,256
 
 Observed timing from one run:
 - Stage 1 (segment boundaries): ~0.00s
 - Stage 2 (pretokenization): ~34.07s
 - Stage 3 (in-memory structures): ~0.11s
-- Merge loop total: ~3.7s (from ~34.07s to ~37.78s elapsed)
+- Merge loop total: ~3.7s
 - End-to-end tokenizer training: ~37.79s
 
-Detailed output
-```
-Tokenizer stage [1/3] segmentation completed: segments=12, elapsed=0.00s
-Tokenizer stage [2/3] pretokenization completed: workers=12, elapsed=34.07s
-Tokenizer stage [3/3] in-memory structures completed: unique_words=59921, unique_pairs=2105, elapsed=0.11s
-Starting tokenizer merge loop: target_vocab_size=128256, planned_merges=128000, progress_interval=6400
-Tokenizer training progress: 6400/128000 merges (5.0%), current_vocab_size=6656, elapsed=36.72s
-Tokenizer training progress: 12800/128000 merges (10.0%), current_vocab_size=13056, elapsed=37.02s
-Tokenizer training progress: 19200/128000 merges (15.0%), current_vocab_size=19456, elapsed=37.22s
-Tokenizer training progress: 25600/128000 merges (20.0%), current_vocab_size=25856, elapsed=37.35s
-Tokenizer training progress: 32000/128000 merges (25.0%), current_vocab_size=32256, elapsed=37.45s
-Tokenizer training progress: 38400/128000 merges (30.0%), current_vocab_size=38656, elapsed=37.52s
-Tokenizer training progress: 44800/128000 merges (35.0%), current_vocab_size=45056, elapsed=37.59s
-Tokenizer training progress: 51200/128000 merges (40.0%), current_vocab_size=51456, elapsed=37.65s
-Tokenizer training progress: 57600/128000 merges (45.0%), current_vocab_size=57856, elapsed=37.70s
-Tokenizer training progress: 64000/128000 merges (50.0%), current_vocab_size=64256, elapsed=37.75s
-Tokenizer training progress: 70400/128000 merges (55.0%), current_vocab_size=70656, elapsed=37.78s
-Tokenizer training progress: 72682/128000 merges (56.8%), current_vocab_size=72938, elapsed=37.78s
-Tokenizer training completed: final_vocab_size=72938, elapsed=37.78s
-Training time: 37.79s
-```
+Takeaway:
+- Pretokenization dominates runtime.
+- Merge loop is fast and scales very well as target vocab grows.
 
-Key takeaway:
-- Pretokenization dominates total runtime.
-- The merge process is very fast and scales well with larger target vocab sizes. In practice, increasing vocab targets (5k -> 10k -> 50k -> 100k -> 128k) showed only a small merge-time increase.
+## Pretokenize Text to Binary Token IDs
 
-
-## Profile the code
+Convert raw text to pretokenized `.bin`:
 
 ```bash
-python -m cProfile -o perf/prepare_train_dataset.prof -s tottime src/prepare_data.py --input data/TinyStoriesV2-GPT4-train.txt --output data/TinyStoriesV2-GPT4-train.bin --num-workers 12
+python src/prepare_data.py \
+  --input data/TinyStoriesV2-GPT4-train.txt \
+  --output data/TinyStoriesV2-GPT4-train.bin \
+  --tokenizer weights/bpe_tokenizer.json \
+  --chunk-size-bytes 16777216 \
+  --num-workers 8
 ```
 
+The output `.bin` stores contiguous `uint32` token IDs and is consumed by `src/dataset.py` via `numpy.memmap`.
+
+## Profile the Data Pipeline
+
+Collect profile:
+
+```bash
+python -m cProfile -o perf/prepare_train_dataset.prof src/prepare_data.py --input data/TinyStoriesV2-GPT4-train.txt --output data/TinyStoriesV2-GPT4-train.bin --num-workers 8
 ```
-python -c "import pstats; pstats.Stats('perf/prepare_train_dataset.prof').sort_stats('tottime').print_stats(20)" > perf/prepare_train_dataset_profile.txt
+
+Generate top-time report:
+
+```bash
+python -c "import pstats; pstats.Stats('perf/prepare_train_dataset.prof').sort_stats('tottime').print_stats(30)" > perf/prepare_train_dataset_profile.txt
 ```
+
+## Technical Deep-Dive
+### Sequential vs Parallel Data Loading
+For one-batch sanity checks on pretokenized `.bin` data:
+- `num_workers=0` can be around `~0.01s`
+- `num_workers=4` can be much slower (multi-second on macOS)
+
+`DataLoader` workers parallelize `dataset.__getitem__`, but they add process/IPC overhead:
+- worker process startup (spawn on macOS)
+- inter-process queue handoff
+- collation and synchronization costs
+
+For this project, `dataset.__getitem__` is intentionally lightweight:
+- `memmap` slice of contiguous integers
+- small cast to tensor
+
+Because the per-sample work is cheap, worker overhead can dominate first-batch latency.
+
+Rule of thumb:
+- Use `num_workers=0` (or `1`) for quick correctness checks and often for training too.
+- Increase workers only when `__getitem__` is truly heavy (image decode/augment, spectrogram generation, on-the-fly tokenization, etc.).
+- Benchmark in your exact environment before assuming more workers are better.
