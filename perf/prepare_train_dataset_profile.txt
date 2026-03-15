@@ -1,0 +1,30 @@
+Sat Mar 14 20:42:14 2026    perf/prepare_train_dataset.prof
+
+         282938 function calls (279874 primitive calls) in 20.540 seconds
+
+   Ordered by: internal time
+   List reduced from 1792 to 20 due to restriction <20>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+    92/88   19.310    0.210   19.310    0.219 {built-in method posix.read}
+      182    0.468    0.003    0.468    0.003 {method 'write' of '_io.BufferedWriter' objects}
+      403    0.401    0.001    0.401    0.001 {method 'read' of '_io.BufferedReader' objects}
+      418    0.123    0.000    0.124    0.000 {built-in method posix.waitpid}
+        1    0.022    0.022    0.042    0.042 /Users/dang.truong/Personal/mlsys/llm-from-scratch/src/tokenizer.py:480(load)
+      100    0.022    0.000    0.023    0.000 {built-in method _io.open}
+       85    0.019    0.000    0.019    0.000 {built-in method posix.unlink}
+       57    0.017    0.000   19.361    0.340 {method 'poll' of 'select.poll' objects}
+       27    0.012    0.000    0.012    0.000 {built-in method _imp.create_dynamic}
+        1    0.011    0.011    0.011    0.011 /opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/json/decoder.py:351(raw_decode)
+      148    0.007    0.000    0.007    0.000 {built-in method marshal.loads}
+       85    0.006    0.000    0.861    0.010 /opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/lib/python3.14/shutil.py:249(copyfileobj)
+       13    0.006    0.000    0.006    0.000 {built-in method _posixsubprocess.fork_exec}
+        1    0.006    0.006   20.540   20.540 src/prepare_data.py:1(<module>)
+      148    0.004    0.000    0.004    0.000 {built-in method _io.open_code}
+       46    0.004    0.000    0.004    0.000 {built-in method _pickle.loads}
+    72697    0.004    0.000    0.004    0.000 /Users/dang.truong/Personal/mlsys/llm-from-scratch/src/tokenizer.py:518(<lambda>)
+       40    0.004    0.000    0.008    0.000 {built-in method builtins.sorted}
+        1    0.004    0.004    0.006    0.006 /Users/dang.truong/Personal/mlsys/llm-from-scratch/src/tokenizer.py:62(get_worker_segment_boundaries)
+      148    0.003    0.000    0.010    0.000 <frozen importlib._bootstrap_external>:509(_compile_bytecode)
+
+
