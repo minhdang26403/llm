@@ -47,7 +47,7 @@ class GPTConfig(ModelConfig):
     def default(cls) -> "GPTConfig":
         # GPT-like small baseline for local experiments.
         return cls(
-            vocab_size=128_256,
+            vocab_size=80_000,
             max_seq_len=1024,
             embed_dim=768,
             num_heads=12,
@@ -67,7 +67,7 @@ class LlamaConfig(ModelConfig):
     def default(cls) -> "LlamaConfig":
         # Llama-style small-ish baseline (GQA enabled).
         return cls(
-            vocab_size=128_256,
+            vocab_size=80_000,
             max_seq_len=2048,
             embed_dim=1024,
             num_heads=16,
