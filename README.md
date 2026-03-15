@@ -93,3 +93,14 @@ Training time: 37.79s
 Key takeaway:
 - Pretokenization dominates total runtime.
 - The merge process is very fast and scales well with larger target vocab sizes. In practice, increasing vocab targets (5k -> 10k -> 50k -> 100k -> 128k) showed only a small merge-time increase.
+
+
+## Profile the code
+
+```bash
+python -m cProfile -o perf/prepare_train_dataset.prof -s tottime src/prepare_data.py --input data/TinyStoriesV2-GPT4-train.txt --output data/TinyStoriesV2-GPT4-train.bin --num-workers 12
+```
+
+```
+python -c "import pstats; pstats.Stats('perf/prepare_train_dataset.prof').sort_stats('tottime').print_stats(20)" > perf/prepare_train_dataset_profile.txt
+```
