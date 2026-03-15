@@ -48,7 +48,7 @@ class GPTConfig(ModelConfig):
         # GPT-like small baseline for local experiments.
         return cls(
             vocab_size=80_000,
-            max_seq_len=1024,
+            max_seq_len=256,
             embed_dim=768,
             num_heads=12,
             num_kv_heads=12,
@@ -68,7 +68,7 @@ class LlamaConfig(ModelConfig):
         # Llama-style small-ish baseline (GQA enabled).
         return cls(
             vocab_size=80_000,
-            max_seq_len=2048,
+            max_seq_len=256,
             embed_dim=1024,
             num_heads=16,
             num_kv_heads=8,
