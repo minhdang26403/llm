@@ -140,12 +140,13 @@ def validate(
     model.eval()
     total_val_loss = 0.0
 
+    print("Validation started")
     for inputs, targets in val_loader:
         inputs, targets = inputs.to(device), targets.to(device)
         logits = model(inputs)
         loss = criterion(logits.reshape(-1, logits.size(-1)), targets.reshape(-1))
         total_val_loss += loss.item()
-
+    print("Validation finished")
     model.train()
     return total_val_loss / max(1, len(val_loader))
 
@@ -177,6 +178,7 @@ def main() -> None:
             "Use a longer dataset or smaller max_seq_len."
         )
     train_loader = build_dataloader(train_dataset, args, device, shuffle=True)
+    print("Number of iterations per epoch: ", len(train_loader))
 
     val_loader: DataLoader | None = None
     if args.val_dataset_path is not None:
@@ -193,8 +195,7 @@ def main() -> None:
     best_val_loss = float("inf")
 
     for epoch in range(args.num_epochs):
-        for batch_idx, (inputs, targets) in enumerate(train_loader):
-            global_step += 1
+        for _, (inputs, targets) in enumerate(train_loader):
             # Shape: (batch_size, seq_len)
             inputs, targets = inputs.to(device), targets.to(device)
 
@@ -212,11 +213,9 @@ def main() -> None:
             optimizer.step()
             scheduler.step()
 
+            global_step += 1
             if global_step % args.log_every == 0:
-                print(
-                    f"epoch={epoch} step={global_step} batch={batch_idx} "
-                    f"loss={loss.item():.4f}"
-                )
+                print(f"epoch={epoch} step={global_step} loss={loss.item():.4f}")
 
             if val_loader is not None and global_step % args.val_every == 0:
                 # Evaluate the model if the user passes in the validation dataset
@@ -225,6 +224,7 @@ def main() -> None:
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
                     torch.save(model.state_dict(), args.output_dir / "best_model.pt")
+
         torch.save(model.state_dict(), args.output_dir / f"model_epoch_{epoch}.pt")
 
 
