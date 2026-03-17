@@ -16,9 +16,9 @@ class SinusoidalEmbedding(nn.Module):
         embedding = torch.stack([angles.sin(), angles.cos()], dim=-1).flatten(1)
         self.register_buffer("embedding", embedding)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, start_pos: int = 0) -> torch.Tensor:
         seq_len = x.shape[1]
-        return self.embedding[:seq_len, :]
+        return self.embedding[start_pos : start_pos + seq_len, :]
 
 
 class RotaryPositionalEmbedding(nn.Module):
@@ -52,7 +52,7 @@ class RotaryPositionalEmbedding(nn.Module):
         x_left, x_right = x.chunk(2, dim=-1)
         return torch.cat([-x_right, x_left], dim=-1)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, start_pos: int = 0) -> torch.Tensor:
         """
         Apply RoPE to attention head states.
 
@@ -66,7 +66,7 @@ class RotaryPositionalEmbedding(nn.Module):
             ValueError: If the last dimension of `x` does not match configured `d`.
         """
         seq_len = x.shape[2]
-        cos = self.cos_cached[:seq_len, :]
-        sin = self.sin_cached[:seq_len, :]
+        cos = self.cos_cached[start_pos : start_pos + seq_len, :]
+        sin = self.sin_cached[start_pos : start_pos + seq_len, :]
 
         return cos * x + sin * self._rotate_half(x)

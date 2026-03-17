@@ -35,6 +35,9 @@ class LlamaBlock(nn.Module):
         x = x + self.swiglu_ffn(self.rms_norm_2(x))
         return x
 
+    def reset_cache(self) -> None:
+        self.attention.reset_cache()
+
 
 class Llama(nn.Module):
     def __init__(self, config: LlamaConfig):
@@ -54,7 +57,15 @@ class Llama(nn.Module):
         # Llama models do not use weight tying
         self.lm_head = nn.Linear(config.embed_dim, config.vocab_size, bias=False)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, start_pos: int = 0) -> torch.Tensor:
+        """
+        Performs the forward pass in the Llama model.
+        Parameters:
+            x: input token ids
+            start_pos: the starting position of the input token sequence.
+            This is not used in the Llama model since the RoPE layer will use current
+            cache size to determine the starting position.
+        """
         x = self.token_embedding(x)
         for block in self.llama_blocks:
             x = block(x)
@@ -63,3 +74,8 @@ class Llama(nn.Module):
         logits = self.lm_head(x)
 
         return logits
+
+    def reset_cache(self) -> None:
+        for block in self.llama_blocks:
+            assert isinstance(block, LlamaBlock)
+            block.reset_cache()

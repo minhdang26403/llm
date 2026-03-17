@@ -152,6 +152,7 @@ def create_model_and_config(
     # Per requirement: generation context is fixed to 256.
     config.max_seq_len = CONTEXT_SIZE
     config.vocab_size = max(config.vocab_size, vocab_size)
+    config.use_cache = True
 
     if model_name == "gpt":
         return GPT(config), config
@@ -180,6 +181,8 @@ def generate_response(
     top_k: int,
     top_p: float,
 ) -> str:
+    model.reset_cache()  # type: ignore
+
     input_ids = tokenizer.encode(prompt)
     if len(input_ids) > CONTEXT_SIZE:
         raise ValueError(
@@ -187,29 +190,33 @@ def generate_response(
             f"Maximum supported context is {CONTEXT_SIZE}."
         )
 
-    generated_ids = list(input_ids)
     eot_id = tokenizer.special_tokens.get("<|endoftext|>")
     top_k_arg = top_k if top_k > 0 else None
     top_p_arg = top_p if top_p < 1.0 else None
 
+    # Inference state
+    start_pos = 0
+    generated_ids = []
+
+    # Prefill input
+    ctx_ids = input_ids[-CONTEXT_SIZE:]  # make sure the input fit in our context window
+    x = torch.tensor([ctx_ids], dtype=torch.long, device=device)
+
     for _ in range(max_generated_tokens):
-        # Crop the context.
-        ctx_ids = generated_ids[-CONTEXT_SIZE:]
-        x = torch.tensor([ctx_ids], dtype=torch.long, device=device)
-        logits = model(x)
+        logits = model(x, start_pos)
+        start_pos += x.shape[1]
+        # Only sample from the last token's logits
         next_token = sample_next_token(
-            logits[:, -1, :],
-            temperature=temperature,
-            top_k=top_k_arg,
-            top_p=top_p_arg,
+            logits[:, -1, :], temperature, top_k_arg, top_p_arg
         )
         next_token_id = int(next_token.item())
         generated_ids.append(next_token_id)
         if eot_id is not None and next_token_id == eot_id:
             break
 
-    completion_ids = generated_ids[len(input_ids) :]
-    return tokenizer.decode(completion_ids)
+        x = next_token
+
+    return tokenizer.decode(generated_ids)
 
 
 def main() -> None:

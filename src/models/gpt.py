@@ -39,6 +39,9 @@ class GPTBlock(nn.Module):
         x = x + self.dropout(self.ffn(x))
         return x
 
+    def reset_cache(self) -> None:
+        self.attn.reset_cache()
+
 
 class GPT(nn.Module):
     def __init__(self, config: GPTConfig):
@@ -57,9 +60,9 @@ class GPT(nn.Module):
         # We use weight tying
         self.lm_head.weight = self.token_embedding.weight
 
-    def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
+    def forward(self, token_ids: torch.Tensor, start_pos: int = 0) -> torch.Tensor:
         x = self.token_embedding(token_ids)
-        x = x + self.positional_embedding(x)
+        x = x + self.positional_embedding(x, start_pos)
 
         for block in self.gpt_blocks:
             x = block(x)
@@ -68,3 +71,8 @@ class GPT(nn.Module):
         logits = self.lm_head(x)
 
         return logits
+
+    def reset_cache(self) -> None:
+        for block in self.gpt_blocks:
+            assert isinstance(block, GPTBlock)
+            block.reset_cache()

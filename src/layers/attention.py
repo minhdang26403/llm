@@ -23,7 +23,12 @@ class MultiheadAttention(nn.Module):
         num_heads: Number of parallel attention heads.
         num_kv_heads: Number of key/value heads. If None, defaults to ``num_heads``
         bias: Whether to use bias in input / output projection layers.
+        use_cache: Whether to enable KV cache for this layer or not
     """
+
+    mask: torch.Tensor
+    k_cache: torch.Tensor
+    v_cache: torch.Tensor
 
     def __init__(
         self,
@@ -34,6 +39,7 @@ class MultiheadAttention(nn.Module):
         dropout_rate: float = 0.0,
         bias: bool = False,
         rope: RotaryPositionalEmbedding | None = None,
+        use_cache: bool = False,
     ):
         super().__init__()
 
@@ -67,6 +73,24 @@ class MultiheadAttention(nn.Module):
             "mask", torch.tril(torch.ones(max_seq_len, max_seq_len, dtype=torch.bool))
         )
 
+        self.use_cache = use_cache
+        self.cache_len = 0
+        if use_cache:
+            # In training, we disable the KV cache, so these buffers are not saved in
+            # the model checkpoint.
+            # Set `persistent` to False to prevent PyTorch from trying to look for this
+            # buffer in the model checkpoint file.
+            self.register_buffer(
+                "k_cache",
+                torch.zeros(1, self.num_kv_heads, max_seq_len, self.head_dim),
+                persistent=False,
+            )
+            self.register_buffer(
+                "v_cache",
+                torch.zeros(1, self.num_kv_heads, max_seq_len, self.head_dim),
+                persistent=False,
+            )
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         batch_size, seq_len, _ = x.shape
 
@@ -88,8 +112,15 @@ class MultiheadAttention(nn.Module):
         )
 
         if self.rope:
-            q = self.rope(q)
-            k = self.rope(k)
+            q = self.rope(q, self.cache_len)
+            k = self.rope(k, self.cache_len)
+
+        if self.use_cache:
+            self.k_cache[:, :, self.cache_len : self.cache_len + seq_len, :] = k
+            self.v_cache[:, :, self.cache_len : self.cache_len + seq_len, :] = v
+            self.cache_len += seq_len
+            k = self.k_cache[:, :, : self.cache_len, :]
+            v = self.v_cache[:, :, : self.cache_len, :]
 
         # 2) If using GQA/MQA, expand KV heads so they align with query heads.
         # For each kv head, repeat it `num_queries_per_kv` times.
@@ -100,25 +131,27 @@ class MultiheadAttention(nn.Module):
             v = v.repeat_interleave(self.num_queries_per_kv, dim=1)
 
         # 3) Compute scaled dot-product attention scores.
-        # Shape: (B, num_heads, N, N)
-        attn_scores = q @ k.transpose(-2, -1) / math.sqrt(self.head_dim)
+        # Shape: (B, num_heads, Nq, Nk)
+        # In decode phase: Nq = 1 while Nk is the length of the current sentence
+        attn_scores: torch.Tensor = q @ k.transpose(-2, -1) / math.sqrt(self.head_dim)
 
         # 4) Apply causal masking (prevent attending to future tokens).
         # Masked positions receive -inf so softmax produces zero probability there.
         # Avoid using `-torch.inf` since the input can be fp16/bfloat16
-        causal_mask = self.mask[:seq_len, :seq_len]  # type: ignore
-        attn_scores.masked_fill_(~causal_mask, torch.finfo(x.dtype).min)
+        if seq_len > 1:
+            causal_mask = self.mask[:seq_len, :seq_len]
+            attn_scores.masked_fill_(~causal_mask, torch.finfo(x.dtype).min)
 
         # 5) Normalize scores into attention weights.
         attn_weights = attn_scores.softmax(dim=-1)
         attn_weights = self.dropout(attn_weights)
 
         # 6) Multiply attention weights by values.
-        # Shape: (B, num_heads, N, head_dim)
-        attn_output = attn_weights @ v
+        # Shape: (B, num_heads, Nq, head_dim)
+        attn_output: torch.Tensor = attn_weights @ v
 
         # 7) Recombine heads: transpose and reshape.
-        # (B, N, num_heads, head_dim) -> (B, N, E)
+        # (B, Nq, num_heads, head_dim) -> (B, Nq, E)
         attn_output = (
             attn_output.transpose(1, 2)
             .contiguous()
@@ -129,3 +162,7 @@ class MultiheadAttention(nn.Module):
         out = self.out_proj(attn_output)
 
         return out
+
+    def reset_cache(self) -> None:
+        self.k_cache.fill_(0)
+        self.v_cache.fill_(0)

@@ -17,6 +17,7 @@ class ModelConfig:
     attn_pdrop: float = 0.0
     scaling_factor: float = 1.0
     scaling_type: RopeScalingType = ""
+    use_cache: bool = False
 
     def __post_init__(self) -> None:
         if self.embed_dim % self.num_heads != 0:
