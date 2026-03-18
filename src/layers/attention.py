@@ -166,3 +166,4 @@ class MultiheadAttention(nn.Module):
     def reset_cache(self) -> None:
         self.k_cache.fill_(0)
         self.v_cache.fill_(0)
+        self.cache_len = 0
