@@ -207,6 +207,16 @@ class MultiheadLatentAttention(nn.Module):
         # Output projection
         self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
 
+        self.rope = rope
+        if self.rope:
+            assert rope_dim is not None
+            if rope_dim % num_heads != 0:
+                raise ValueError("rope_dim must be divisible by num_heads")
+
+            self.rope_head_dim = rope_dim // num_heads
+            self.q_rope_proj = nn.Linear(embed_dim, rope_dim, bias=bias)
+            self.k_rope_proj = nn.Linear(embed_dim, rope_dim, bias=bias)
+
         # Mask for causal attention
         self.register_buffer(
             "mask", torch.tril(torch.ones(max_seq_len, max_seq_len, dtype=torch.bool))
@@ -241,8 +251,31 @@ class MultiheadLatentAttention(nn.Module):
             .transpose(1, 2)
         )
 
-        # Shape: (B, nh, N, N)
-        attn_scores: torch.Tensor = q @ k.transpose(-2, -1) / math.sqrt(self.head_dim)
+        if self.rope:
+            # Project the token embeddings into small vectors that represent
+            # positional information
+            q_rope = (
+                self.q_rope_proj(x)
+                .view(batch_size, seq_len, self.num_heads, self.rope_head_dim)
+                .transpose(1, 2)
+            )
+            k_rope = (
+                self.k_rope_proj(x)
+                .view(batch_size, seq_len, self.num_heads, self.rope_head_dim)
+                .transpose(1, 2)
+            )
+
+            # Apply the Rotary Embedding
+            q_rope = self.rope(q_rope)
+            k_rope = self.rope(k_rope)
+
+            total_dim = self.head_dim + self.rope_head_dim
+            attn_scores = (
+                q @ k.transpose(-2, -1) + q_rope @ k_rope.transpose(-2, -1)
+            ) / math.sqrt(total_dim)
+        else:
+            # Shape: (B, nh, N, N)
+            attn_scores = q @ k.transpose(-2, -1) / math.sqrt(self.head_dim)
 
         # No need to apply mask if we have only one token
         if seq_len > 1:
