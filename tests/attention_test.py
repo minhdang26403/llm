@@ -103,7 +103,7 @@ def test_attention_with_kv_cache():
     # PyTorch implementation
     with torch.no_grad():
         # Compute attention using our implementation
-        out = attn(x)
+        _ = attn(x)
         assert attn.cache_len == seq_len
 
         head_dim = embed_dim // num_heads
