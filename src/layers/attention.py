@@ -167,3 +167,101 @@ class MultiheadAttention(nn.Module):
         self.k_cache.fill_(0)
         self.v_cache.fill_(0)
         self.cache_len = 0
+
+
+class MultiheadLatentAttention(nn.Module):
+    mask: torch.Tensor
+
+    def __init__(
+        self,
+        embed_dim: int,
+        num_heads: int,
+        latent_dim: int,
+        max_seq_len: int,
+        dropout_rate: float = 0.0,
+        bias: bool = False,
+        rope: RotaryPositionalEmbedding | None = None,
+        rope_dim: int | None = None,
+        use_cache: bool = False,
+    ):
+        super().__init__()
+
+        if embed_dim % num_heads != 0:
+            raise ValueError("embed_dim must be divisible by num_heads")
+
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        self.head_dim = embed_dim // num_heads
+
+        # Query projection matrix
+        self.q_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+
+        # Compression and Decompression matrices
+        self.W_dkv = nn.Linear(embed_dim, latent_dim, bias=bias)
+        self.W_uk = nn.Linear(latent_dim, embed_dim, bias=bias)
+        self.W_vk = nn.Linear(latent_dim, embed_dim, bias=bias)
+
+        # Optional dropout layer
+        self.dropout = nn.Dropout(dropout_rate)
+
+        # Output projection
+        self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+
+        # Mask for causal attention
+        self.register_buffer(
+            "mask", torch.tril(torch.ones(max_seq_len, max_seq_len, dtype=torch.bool))
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        batch_size, seq_len, _ = x.shape
+
+        # Perform Q projection as usual
+        # Shape: (B, nh, N, hd)
+        q = (
+            self.q_proj(x)
+            .view(batch_size, seq_len, self.num_heads, self.head_dim)
+            .transpose(1, 2)
+        )
+
+        # Compress token embedding into a latent vector
+        # Shape: (B, N, l)
+        c_kv = self.W_dkv(x)
+
+        # Decompress the latent vector into K and V
+        # Shape: (B, nh, N, hd)
+        k = (
+            self.W_uk(c_kv)
+            .view(batch_size, seq_len, self.num_heads, self.head_dim)
+            .transpose(1, 2)
+        )
+        # Shape: (B, nh, N, hd)
+        v = (
+            self.W_vk(c_kv)
+            .view(batch_size, seq_len, self.num_heads, self.head_dim)
+            .transpose(1, 2)
+        )
+
+        # Shape: (B, nh, N, N)
+        attn_scores: torch.Tensor = q @ k.transpose(-2, -1) / math.sqrt(self.head_dim)
+
+        # No need to apply mask if we have only one token
+        if seq_len > 1:
+            causal_mask = self.mask[:seq_len, :seq_len]
+            attn_scores.masked_fill_(~causal_mask, torch.finfo(x.dtype).min)
+
+        attn_weights = attn_scores.softmax(dim=-1)
+        attn_weights = self.dropout(attn_weights)
+
+        # Shape: (B, nh, N, hd)
+        attn_output: torch.Tensor = attn_weights @ v
+
+        # Shape: (B, N, E)
+        attn_output = (
+            attn_output.transpose(1, 2)
+            .contiguous()
+            .view(batch_size, seq_len, self.embed_dim)
+        )
+
+        out = self.out_proj(attn_output)
+
+        return out
