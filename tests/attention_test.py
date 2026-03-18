@@ -83,3 +83,77 @@ def test_attention_causality_no_future_leakage():
 
     # Positions [0, 1, 2] should be unaffected by modifications to positions >= 3.
     assert torch.allclose(out_base[:, :3, :], out_changed[:, :3, :], atol=1e-6)
+
+
+def test_attention_with_kv_cache():
+    torch.manual_seed(0)
+    embed_dim = 64
+    max_seq_len = 128
+    num_heads = 4
+    num_kv_heads = 2
+    batch_size = 1
+    seq_len = 16
+    x = torch.randn(batch_size, seq_len, embed_dim)
+
+    # Our MHA implementation
+    attn = MultiheadAttention(
+        embed_dim, max_seq_len, num_heads, num_kv_heads, use_cache=True
+    )
+
+    # PyTorch implementation
+    with torch.no_grad():
+        # Compute attention using our implementation
+        out = attn(x)
+        assert attn.cache_len == seq_len
+
+        head_dim = embed_dim // num_heads
+        key = (
+            attn.k_proj(x)
+            .view(batch_size, seq_len, num_kv_heads, head_dim)
+            .transpose(1, 2)
+        )
+        value = (
+            attn.v_proj(x)
+            .view(batch_size, seq_len, num_kv_heads, head_dim)
+            .transpose(1, 2)
+        )
+
+    k_cache = attn.k_cache
+    v_cache = attn.v_cache
+    assert torch.equal(k_cache[:, :, :seq_len, :], key)
+    assert torch.equal(v_cache[:, :, :seq_len, :], value)
+    assert attn.cache_len == seq_len
+
+    # Reset cache
+    attn.reset_cache()
+    assert torch.equal(k_cache, torch.zeros_like(k_cache))
+    assert torch.equal(v_cache, torch.zeros_like(v_cache))
+    assert attn.cache_len == 0
+
+
+def test_attention_with_kv_cache_numerical_correctness():
+    torch.manual_seed(0)
+    embed_dim = 8
+    max_seq_len = 128
+    num_heads = 4
+    num_kv_heads = 2
+    batch_size = 1
+    seq_len = 16
+    prefill_length = 10
+    x = torch.randn(batch_size, seq_len, embed_dim)
+
+    # Our MHA implementation (no cache)
+    attn = MultiheadAttention(embed_dim, max_seq_len, num_heads, num_kv_heads)
+
+    # Cached attention with identical weights.
+    attn_cache = MultiheadAttention(
+        embed_dim, max_seq_len, num_heads, num_kv_heads, use_cache=True
+    )
+    attn_cache.load_state_dict(attn.state_dict(), strict=True)
+
+    with torch.no_grad():
+        out = attn(x[:, : prefill_length + 1, :])
+        _ = attn_cache(x[:, :prefill_length, :])
+        decode_out = attn_cache(x[:, prefill_length : prefill_length + 1, :])
+
+    assert torch.allclose(out[:, -1, :], decode_out)
