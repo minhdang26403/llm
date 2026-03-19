@@ -171,6 +171,8 @@ class MultiheadAttention(nn.Module):
 
 class MultiheadLatentAttention(nn.Module):
     mask: torch.Tensor
+    c_kv_cache: torch.Tensor
+    k_rope_cache: torch.Tensor
 
     def __init__(
         self,
@@ -224,6 +226,20 @@ class MultiheadLatentAttention(nn.Module):
             self.q_rope_proj = nn.Linear(embed_dim, rope_dim, bias=bias)
             self.k_rope_proj = nn.Linear(embed_dim, rope_dim, bias=bias)
 
+        self.use_cache = use_cache
+        if self.use_cache:
+            self.cache_len = 0
+            self.register_buffer(
+                "c_kv_cache",
+                torch.zeros(1, max_seq_len, self.latent_dim),
+                persistent=False,
+            )
+            self.register_buffer(
+                "k_rope_cache",
+                torch.zeros(1, self.num_heads, max_seq_len, self.rope_head_dim),
+                persistent=False,
+            )
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         batch_size, seq_len, _ = x.shape
 
@@ -238,6 +254,10 @@ class MultiheadLatentAttention(nn.Module):
         # Compress token embedding into a latent vector
         # Shape: (B, N, l)
         c_kv: torch.Tensor = self.down_kv_proj(x)
+
+        if self.use_cache:
+            self.c_kv_cache[:, self.cache_len : self.cache_len + seq_len, :] = c_kv
+            c_kv = self.c_kv_cache[:, : self.cache_len + seq_len, :]
 
         if self.training:
             # Decompress the latent vector into K and V
@@ -261,7 +281,7 @@ class MultiheadLatentAttention(nn.Module):
                 1, self.num_heads, self.head_dim, self.latent_dim
             )
             attn_scores = q_compressed @ c_kv.view(
-                batch_size, 1, seq_len, self.latent_dim
+                batch_size, 1, -1, self.latent_dim
             ).transpose(-2, -1)
 
         total_dim = self.head_dim
@@ -280,13 +300,22 @@ class MultiheadLatentAttention(nn.Module):
             )
 
             # Apply the Rotary Embedding
-            q_rope = self.rope(q_rope)
-            k_rope = self.rope(k_rope)
+            q_rope = self.rope(q_rope, self.cache_len)
+            k_rope = self.rope(k_rope, self.cache_len)
+
+            if self.use_cache:
+                self.k_rope_cache[
+                    :, :, self.cache_len : self.cache_len + seq_len, :
+                ] = k_rope
+                k_rope = self.k_rope_cache[:, :, : self.cache_len + seq_len, :]
 
             total_dim += self.rope_head_dim
             attn_scores += q_rope @ k_rope.transpose(-2, -1)
 
         attn_scores /= math.sqrt(total_dim)
+
+        if self.use_cache:
+            self.cache_len += seq_len
 
         # No need to apply mask if we have only one token
         if seq_len > 1:
@@ -310,9 +339,7 @@ class MultiheadLatentAttention(nn.Module):
             out = self.out_proj(attn_output)
         else:
             # Shape: (B, nh, N, l)
-            c_kv_weighted = attn_weights @ c_kv.view(
-                batch_size, 1, seq_len, self.latent_dim
-            )
+            c_kv_weighted = attn_weights @ c_kv.view(batch_size, 1, -1, self.latent_dim)
             # Shape: (B, nh, N, E)
             out_per_head = c_kv_weighted @ self.W_absored
             out = out_per_head.sum(dim=1)
@@ -332,3 +359,8 @@ class MultiheadLatentAttention(nn.Module):
 
         # Shape: (nh, l, E)
         self.W_absored = W_uv @ W_out
+
+    def reset_cache(self) -> None:
+        self.c_kv_cache.fill_(0)
+        self.k_rope_cache.fill_(0)
+        self.cache_len = 0
