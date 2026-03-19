@@ -227,18 +227,20 @@ class MultiheadLatentAttention(nn.Module):
             self.k_rope_proj = nn.Linear(embed_dim, rope_dim, bias=bias)
 
         self.use_cache = use_cache
+        self.cache_len = 0
         if self.use_cache:
-            self.cache_len = 0
             self.register_buffer(
                 "c_kv_cache",
                 torch.zeros(1, max_seq_len, self.latent_dim),
                 persistent=False,
             )
-            self.register_buffer(
-                "k_rope_cache",
-                torch.zeros(1, self.num_heads, max_seq_len, self.rope_head_dim),
-                persistent=False,
-            )
+
+            if self.rope:
+                self.register_buffer(
+                    "k_rope_cache",
+                    torch.zeros(1, self.num_heads, max_seq_len, self.rope_head_dim),
+                    persistent=False,
+                )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         batch_size, seq_len, _ = x.shape
@@ -280,9 +282,7 @@ class MultiheadLatentAttention(nn.Module):
             q_compressed: torch.Tensor = q @ self.up_k_proj.weight.view(
                 1, self.num_heads, self.head_dim, self.latent_dim
             )
-            attn_scores = q_compressed @ c_kv.view(
-                batch_size, 1, -1, self.latent_dim
-            ).transpose(-2, -1)
+            attn_scores = q_compressed @ c_kv.unsqueeze(1).transpose(-2, -1)
 
         total_dim = self.head_dim
         if self.rope:
@@ -339,26 +339,12 @@ class MultiheadLatentAttention(nn.Module):
             out = self.out_proj(attn_output)
         else:
             # Shape: (B, nh, N, l)
-            c_kv_weighted = attn_weights @ c_kv.view(batch_size, 1, -1, self.latent_dim)
+            c_kv_weighted = attn_weights @ c_kv.unsqueeze(1)
             # Shape: (B, nh, N, E)
             out_per_head = c_kv_weighted @ self.W_absored
             out = out_per_head.sum(dim=1)
 
         return out
-
-    def finish_training(self):
-        # Isolate heads in W_out: (E, E) -> (nh, hd, E)
-        W_out = self.out_proj.weight.T.view(
-            self.num_heads, self.head_dim, self.embed_dim
-        )
-
-        # Isolate heads in W_uv: (l, E) -> (l, nh, hd) -> (nh, l, hd)
-        W_uv = self.up_v_proj.weight.T.view(
-            self.latent_dim, self.num_heads, self.head_dim
-        ).transpose(0, 1)
-
-        # Shape: (nh, l, E)
-        self.W_absored = W_uv @ W_out
 
     def reset_cache(self) -> None:
         self.c_kv_cache.fill_(0)
