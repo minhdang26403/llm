@@ -3,41 +3,58 @@ import torch.nn as nn
 
 
 class LayerNorm(nn.Module):
-    def __init__(self, normalized_shape: int | list[int], eps=1e-05):
-        super().__init__()  # CRITICAL: Always call super()
-
-        if isinstance(normalized_shape, int):
-            shape = (normalized_shape,)
-        else:
-            shape = tuple(normalized_shape)  # type: ignore
-
-        self.normalized_dim = tuple(range(-len(shape), 0))
-        self.eps = eps
-        self.weight = nn.Parameter(torch.ones(shape))
-        self.bias = nn.Parameter(torch.zeros(shape))
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        mean = x.mean(dim=self.normalized_dim, keepdim=True)
-        var = x.var(dim=self.normalized_dim, correction=0, keepdim=True)
-
-        return (x - mean) / torch.sqrt(var + self.eps) * self.weight + self.bias
-
-
-class RMSNorm(nn.Module):
-    def __init__(self, normalized_shape: int | list[int], eps=None):
+    def __init__(
+        self, normalized_shape: int | list[int], eps: float = 1e-05, device=None
+    ):
         super().__init__()
 
         if isinstance(normalized_shape, int):
-            shape = (normalized_shape,)
+            shape: tuple[int, ...] = (normalized_shape,)
         else:
-            shape = tuple(normalized_shape)  # type: ignore
+            shape = tuple(normalized_shape)
 
         self.normalized_dim = tuple(range(-len(shape), 0))
         self.eps = eps
-        self.weight = nn.Parameter(torch.ones(shape))
+
+        # Initialize the tensor directly on the target hardware
+        self.weight = nn.Parameter(
+            torch.ones(shape, dtype=torch.float32, device=device)
+        )
+        self.bias = nn.Parameter(torch.zeros(shape, dtype=torch.float32, device=device))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        eps = self.eps if self.eps else torch.finfo(x.dtype).eps
-        rms = torch.sqrt(eps + torch.mean(x**2, dim=self.normalized_dim, keepdim=True))
+        t, dtype = x.float(), x.dtype
+        mean = t.mean(dim=self.normalized_dim, keepdim=True)
+        var = t.var(dim=self.normalized_dim, correction=0, keepdim=True)
+        # Perform math on float32
+        result = (t - mean) * torch.rsqrt(var + self.eps) * self.weight + self.bias
 
-        return x / rms * self.weight
+        return result.to(dtype)
+
+
+class RMSNorm(nn.Module):
+    def __init__(
+        self, normalized_shape: int | list[int], eps: float = 1e-05, device=None
+    ):
+        super().__init__()
+
+        if isinstance(normalized_shape, int):
+            shape: tuple[int, ...] = (normalized_shape,)
+        else:
+            shape = tuple(normalized_shape)
+
+        self.normalized_dim = tuple(range(-len(shape), 0))
+        self.eps = eps
+        # Initialize the tensor directly on the target hardware
+        self.scale = nn.Parameter(torch.ones(shape, dtype=torch.float32, device=device))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        t, dtype = x.float(), x.dtype
+        inv_rms = torch.rsqrt(
+            self.eps + torch.mean(t**2, dim=self.normalized_dim, keepdim=True)
+        )
+        # Perform math on float32
+        result = t * inv_rms * self.scale
+
+        # Need to convert back to the input's data type
+        return result.to(dtype)
