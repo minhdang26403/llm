@@ -34,9 +34,7 @@ class LayerNorm(nn.Module):
 
 
 class RMSNorm(nn.Module):
-    def __init__(
-        self, normalized_shape: int | list[int], eps: float = 1e-05, device=None
-    ):
+    def __init__(self, normalized_shape: int | list[int], eps=None, device=None):
         super().__init__()
 
         if isinstance(normalized_shape, int):
@@ -51,8 +49,9 @@ class RMSNorm(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         t, dtype = x.float(), x.dtype
+        eps = self.eps if self.eps is not None else torch.finfo(x.dtype).eps
         inv_rms = torch.rsqrt(
-            self.eps + torch.mean(t**2, dim=self.normalized_dim, keepdim=True)
+            eps + torch.mean(t**2, dim=self.normalized_dim, keepdim=True)
         )
         # Perform math on float32
         result = t * inv_rms * self.scale
