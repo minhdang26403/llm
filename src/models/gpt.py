@@ -14,9 +14,10 @@ class GPTBlock(nn.Module):
 
         self.ln_1 = LayerNorm(config.embed_dim)
         self.attn = MultiheadAttention(
-            config.embed_dim,
-            config.max_seq_len,
-            config.num_heads,
+            max_seq_len=config.max_seq_len,
+            embed_dim=config.embed_dim,
+            head_dim=config.head_dim,
+            num_heads=config.num_heads,
             num_kv_heads=config.num_kv_heads,
             dropout_rate=config.attn_pdrop,
         )

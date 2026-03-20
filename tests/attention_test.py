@@ -9,23 +9,42 @@ def test_attention_tensor_shapes():
     x = torch.randn(2, 5, 16)
 
     # Standard MHA
-    mha = MultiheadAttention(embed_dim=16, max_seq_len=8, num_heads=4, num_kv_heads=4)
+    mha = MultiheadAttention(
+        max_seq_len=8,
+        embed_dim=16,
+        head_dim=4,
+        num_heads=4,
+        num_kv_heads=4,
+    )
     out_mha = mha(x)
     assert out_mha.shape == (2, 5, 16)
 
     # GQA
-    gqa = MultiheadAttention(embed_dim=16, max_seq_len=8, num_heads=4, num_kv_heads=2)
+    gqa = MultiheadAttention(
+        max_seq_len=8,
+        embed_dim=16,
+        head_dim=4,
+        num_heads=4,
+        num_kv_heads=2,
+    )
     out_gqa = gqa(x)
     assert out_gqa.shape == (2, 5, 16)
 
     # MQA
-    mqa = MultiheadAttention(embed_dim=16, max_seq_len=8, num_heads=4, num_kv_heads=1)
+    mqa = MultiheadAttention(
+        max_seq_len=8,
+        embed_dim=16,
+        head_dim=4,
+        num_heads=4,
+        num_kv_heads=1,
+    )
     out_mqa = mqa(x)
     assert out_mqa.shape == (2, 5, 16)
 
 
 def test_attention_numerical_correctness():
     embed_dim = 64
+    head_dim = 16
     max_seq_len = 128
     num_heads = 4
     num_kv_heads = 2
@@ -34,7 +53,13 @@ def test_attention_numerical_correctness():
     x = torch.randn(batch_size, seq_len, embed_dim)
 
     # Our MHA implementation
-    attn = MultiheadAttention(embed_dim, max_seq_len, num_heads, num_kv_heads)
+    attn = MultiheadAttention(
+        max_seq_len=max_seq_len,
+        embed_dim=embed_dim,
+        head_dim=head_dim,
+        num_heads=num_heads,
+        num_kv_heads=num_kv_heads,
+    )
 
     # PyTorch implementation
     with torch.no_grad():
@@ -72,7 +97,13 @@ def test_attention_numerical_correctness():
 
 def test_attention_causality_no_future_leakage():
     torch.manual_seed(123)
-    attn = MultiheadAttention(embed_dim=8, max_seq_len=8, num_heads=2, num_kv_heads=2)
+    attn = MultiheadAttention(
+        max_seq_len=8,
+        embed_dim=8,
+        head_dim=2,
+        num_heads=2,
+        num_kv_heads=2,
+    )
 
     x_base = torch.randn(1, 6, 8)
     x_changed = x_base.clone()
@@ -88,6 +119,7 @@ def test_attention_causality_no_future_leakage():
 def test_attention_with_kv_cache():
     torch.manual_seed(0)
     embed_dim = 64
+    head_dim = 16
     max_seq_len = 128
     num_heads = 4
     num_kv_heads = 2
@@ -97,7 +129,12 @@ def test_attention_with_kv_cache():
 
     # Our MHA implementation
     attn = MultiheadAttention(
-        embed_dim, max_seq_len, num_heads, num_kv_heads, use_cache=True
+        max_seq_len=max_seq_len,
+        embed_dim=embed_dim,
+        head_dim=head_dim,
+        num_heads=num_heads,
+        num_kv_heads=num_kv_heads,
+        use_cache=True,
     )
 
     # PyTorch implementation
@@ -134,6 +171,7 @@ def test_attention_with_kv_cache():
 def test_attention_with_kv_cache_numerical_correctness():
     torch.manual_seed(0)
     embed_dim = 8
+    head_dim = 2
     max_seq_len = 128
     num_heads = 4
     num_kv_heads = 2
@@ -143,11 +181,22 @@ def test_attention_with_kv_cache_numerical_correctness():
     x = torch.randn(batch_size, seq_len, embed_dim)
 
     # Our MHA implementation (no cache)
-    attn = MultiheadAttention(embed_dim, max_seq_len, num_heads, num_kv_heads)
+    attn = MultiheadAttention(
+        max_seq_len=max_seq_len,
+        embed_dim=embed_dim,
+        head_dim=head_dim,
+        num_heads=num_heads,
+        num_kv_heads=num_kv_heads,
+    )
 
     # Cached attention with identical weights.
     attn_cache = MultiheadAttention(
-        embed_dim, max_seq_len, num_heads, num_kv_heads, use_cache=True
+        max_seq_len=max_seq_len,
+        embed_dim=embed_dim,
+        head_dim=head_dim,
+        num_heads=num_heads,
+        num_kv_heads=num_kv_heads,
+        use_cache=True,
     )
     attn_cache.load_state_dict(attn.state_dict(), strict=True)
 

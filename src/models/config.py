@@ -9,6 +9,7 @@ class ModelConfig:
     vocab_size: int
     max_seq_len: int
     embed_dim: int
+    head_dim: int
     num_heads: int
     num_kv_heads: int
     num_blocks: int
@@ -22,6 +23,10 @@ class ModelConfig:
     def __post_init__(self) -> None:
         if self.embed_dim % self.num_heads != 0:
             raise ValueError("embed_dim must be divisible by num_heads")
+        if self.head_dim <= 0:
+            raise ValueError("head_dim must be positive")
+        if self.embed_dim % self.head_dim != 0:
+            raise ValueError("embed_dim must be divisible by head_dim")
         if self.num_kv_heads <= 0:
             raise ValueError("num_kv_heads must be positive")
         if self.num_heads % self.num_kv_heads != 0:
@@ -51,6 +56,7 @@ class GPTConfig(ModelConfig):
             vocab_size=80_000,
             max_seq_len=256,
             embed_dim=768,
+            head_dim=64,
             num_heads=12,
             num_kv_heads=12,
             num_blocks=12,
@@ -71,6 +77,7 @@ class LlamaConfig(ModelConfig):
             vocab_size=80_000,
             max_seq_len=256,
             embed_dim=1024,
+            head_dim=64,
             num_heads=16,
             num_kv_heads=8,
             num_blocks=16,

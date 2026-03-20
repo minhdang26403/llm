@@ -13,16 +13,11 @@ class LlamaBlock(nn.Module):
         super().__init__()
 
         self.rms_norm_1 = RMSNorm(config.embed_dim, eps=1e-5)
-        self.rope = RotaryPositionalEmbedding(
-            config.embed_dim // config.num_heads,
-            config.max_seq_len,
-            scaling_factor=config.scaling_factor,
-            scaling_type=config.scaling_type,
-        )
         self.attention = MultiheadAttention(
-            config.embed_dim,
-            config.max_seq_len,
-            config.num_heads,
+            max_seq_len=config.max_seq_len,
+            embed_dim=config.embed_dim,
+            head_dim=config.head_dim,
+            num_heads=config.num_heads,
             num_kv_heads=config.num_kv_heads,
             dropout_rate=config.attn_pdrop,
             rope=rope,
@@ -45,8 +40,8 @@ class Llama(nn.Module):
 
         self.token_embedding = nn.Embedding(config.vocab_size, config.embed_dim)
         rope = RotaryPositionalEmbedding(
-            config.embed_dim // config.num_heads,
-            config.max_seq_len,
+            head_dim=config.head_dim,
+            max_seq_len=config.max_seq_len,
             scaling_factor=config.scaling_factor,
             scaling_type=config.scaling_type,
         )

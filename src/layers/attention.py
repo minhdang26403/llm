@@ -18,12 +18,14 @@ class MultiheadAttention(nn.Module):
 
     Args:
         embed_dim: Total dimension of the model.
-        d_out: Output embedding dimension across all query heads.
         max_seq_len: Maximum sequence length
+        head_dim: Dimension of each attention head.
         num_heads: Number of parallel attention heads.
-        num_kv_heads: Number of key/value heads. If None, defaults to ``num_heads``
+        num_kv_heads: Number of key/value heads. If None, defaults to ``num_heads``.
+        dropout_rate: Dropout rate.
         bias: Whether to use bias in input / output projection layers.
-        use_cache: Whether to enable KV cache for this layer or not
+        rope: Rotary positional embedding.
+        use_cache: Whether to enable KV cache for this layer or not.
     """
 
     mask: torch.Tensor
@@ -32,8 +34,9 @@ class MultiheadAttention(nn.Module):
 
     def __init__(
         self,
-        embed_dim: int,
         max_seq_len: int,
+        embed_dim: int,
+        head_dim: int,
         num_heads: int,
         num_kv_heads: int | None = None,
         dropout_rate: float = 0.0,
@@ -43,23 +46,21 @@ class MultiheadAttention(nn.Module):
     ):
         super().__init__()
 
-        if embed_dim % num_heads != 0:
-            raise ValueError("embed_dim must be divisible by num_heads")
-
         self.embed_dim = embed_dim
+        self.head_dim = head_dim
         self.num_heads = num_heads
         self.num_kv_heads = num_kv_heads if num_kv_heads else num_heads
-        self.head_dim = embed_dim // num_heads
 
         # Number of query heads that share one KV head (for GQA/MQA).
         self.num_queries_per_kv = self.num_heads // self.num_kv_heads
 
-        # K/V use kv_dim, which can be smaller than embed_dim for GQA/MQA,
+        # K/V use kv_dim, which can be smaller than q_dim for GQA/MQA,
         # since K/V use less number of heads than Q.
+        self.q_dim = self.num_heads * self.head_dim
         kv_dim = self.num_kv_heads * self.head_dim
 
         # Projection layers.
-        self.q_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.q_proj = nn.Linear(embed_dim, self.q_dim, bias=bias)
         self.k_proj = nn.Linear(embed_dim, kv_dim, bias=bias)
         self.v_proj = nn.Linear(embed_dim, kv_dim, bias=bias)
 
@@ -67,7 +68,7 @@ class MultiheadAttention(nn.Module):
         self.rope = rope
 
         # Output projection after concatenating query heads.
-        self.out_proj = nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.out_proj = nn.Linear(self.q_dim, embed_dim, bias=bias)
 
         self.register_buffer(
             "mask", torch.tril(torch.ones(max_seq_len, max_seq_len, dtype=torch.bool))
@@ -155,13 +156,11 @@ class MultiheadAttention(nn.Module):
         attn_output = (
             attn_output.transpose(1, 2)
             .contiguous()
-            .view(batch_size, seq_len, self.embed_dim)
+            .view(batch_size, seq_len, self.q_dim)
         )
 
         # 8) Final output projection.
-        out = self.out_proj(attn_output)
-
-        return out
+        return self.out_proj(attn_output)
 
     def reset_cache(self) -> None:
         self.k_cache.fill_(0)

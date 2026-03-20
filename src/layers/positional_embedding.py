@@ -24,7 +24,7 @@ class SinusoidalEmbedding(nn.Module):
 class RotaryPositionalEmbedding(nn.Module):
     def __init__(
         self,
-        d,
+        head_dim: int,
         max_seq_len,
         base: int = 10_000,
         scaling_factor: float = 1,
@@ -35,15 +35,15 @@ class RotaryPositionalEmbedding(nn.Module):
         position = torch.arange(max_seq_len)  # Shape: (N,)
 
         if scaling_type == "ntk":
-            base = base * scaling_factor ** (d / (d - 2))
+            base = base * scaling_factor ** (head_dim / (head_dim - 2))
         elif scaling_type == "linear":
             position /= scaling_factor
 
-        t = torch.arange(0, d, 2)
-        inv_freq = base ** (-t / d)  # Shape: (d/2,)
+        t = torch.arange(0, head_dim, 2)
+        inv_freq = base ** (-t / head_dim)  # Shape: (head_dim/2,)
 
-        angles = torch.einsum("i,j->ij", position, inv_freq)  # Shape: (N, d/2)
-        angles = torch.cat([angles, angles], dim=-1)  # Shape: (N, d)
+        angles = torch.einsum("i,j->ij", position, inv_freq)  # Shape: (N, head_dim/2)
+        angles = torch.cat([angles, angles], dim=-1)  # Shape: (N, head_dim)
 
         self.register_buffer("cos_cached", angles.cos())
         self.register_buffer("sin_cached", angles.sin())
