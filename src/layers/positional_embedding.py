@@ -52,6 +52,19 @@ class RotaryPositionalEmbedding(nn.Module):
         x_left, x_right = x.chunk(2, dim=-1)
         return torch.cat([-x_right, x_left], dim=-1)
 
+    # Inefficient!!!
+    # def _rotate_adjacent(self, x: torch.Tensor) -> torch.Tensor:
+    #     """
+    #     Rotates adjacent pairs: [x0, x1, x2, x3] -> [-x1, x0, -x3, x2]
+    #     """
+    #     x_rotated = torch.empty_like(x)
+    #     # Evens take the negative of the odds
+    #     x_rotated[..., 0::2] = -x[..., 1::2]
+    #     # Odds take the evens
+    #     x_rotated[..., 1::2] = x[..., 0::2]
+
+    #     return x_rotated
+
     def forward(self, x: torch.Tensor, start_pos: int = 0) -> torch.Tensor:
         """
         Apply RoPE to attention head states.
@@ -66,7 +79,7 @@ class RotaryPositionalEmbedding(nn.Module):
             ValueError: If the last dimension of `x` does not match configured `d`.
         """
         seq_len = x.shape[2]
-        cos = self.cos_cached[start_pos : start_pos + seq_len, :]
-        sin = self.sin_cached[start_pos : start_pos + seq_len, :]
+        cos = self.cos_cached[start_pos : start_pos + seq_len, :].to(x.dtype)
+        sin = self.sin_cached[start_pos : start_pos + seq_len, :].to(x.dtype)
 
         return cos * x + sin * self._rotate_half(x)
