@@ -28,7 +28,7 @@ def sample_next_token(
         top_p: Float between 0 and 1. If < 1.0, applies nucleus sampling.
 
     Returns:
-        next_token: Tensor of shape (batch_size, 1) containing the sampled token IDs.
+        next_token_ids: Tensor of shape (batch_size, 1) containing the sampled token IDs
     """
     # Fallback to greedy decoding in case temperature is zero.
     if temperature == 0.0:
@@ -36,45 +36,33 @@ def sample_next_token(
 
     # Scale logits by desired temperature.
     logits = logits / temperature
+    probs = logits.softmax(dim=-1)
 
     # We perform top-k filtering before top-p to cheaply eliminate the massive tail of
     # the vocabulary.
     if top_k:
-        # The top-k operation reduces the logits size to (batch_size, k)
-        logits, top_k_indices = torch.topk(logits, k=min(top_k, logits.size(-1)))
+        # torch.topk already sorts the probs in descending order
+        probs, indices = torch.topk(probs, k=min(top_k, probs.size(-1)))
+    elif top_p:
+        # We need to sort probs in descending order for top-p operation
+        probs, indices = torch.sort(probs, descending=True)
 
     if top_p:
-        if top_k:
-            # If we use top-k filtering, logits are already sorted by torch.topk
-            cumulative_probs = logits.softmax(dim=-1).cumsum(dim=-1)
-            indices_to_remove = cumulative_probs > top_p
-            # We also include the token that pushed us over the top-p threshold.
-            indices_to_remove[..., 1:] = indices_to_remove[..., :-1].clone()
-            indices_to_remove[..., 0] = False
-        else:
-            sorted_logits, sorted_indices = torch.sort(logits, descending=True)
-            cumulative_probs = sorted_logits.softmax(dim=-1).cumsum(dim=-1)
-            sorted_indices_to_remove = cumulative_probs > top_p
-            sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[
-                ..., :-1
-            ].clone()
-            sorted_indices_to_remove[..., 0] = False
-            # We have a mask for sorted logits; scatter it back to original
-            # vocabulary positions before masking.
-            indices_to_remove = torch.zeros_like(sorted_indices_to_remove)
-            indices_to_remove.scatter_(1, sorted_indices, sorted_indices_to_remove)
+        cum_probs = probs.cumsum(dim=-1)
+        # If the cumulative probabilities of all tokens before the current token is
+        # already larger than p, this token (and all tokens after it) should be excluded
+        # from the candidate set.
+        mask = (cum_probs - probs) > top_p
+        probs[mask] = 0
 
-        # Apply the final mask
-        logits.masked_fill_(indices_to_remove, torch.finfo(logits.dtype).min)
+    # torch.multinomial allows unnormalized weights in case top_p truncated them.
+    next_token_ids = torch.multinomial(probs, num_samples=1)
 
-    probs = torch.softmax(logits, dim=-1)
-    next_token = torch.multinomial(probs, num_samples=1)
+    # Map back to original vocab indices if we altered the tensor shape/order
+    if top_k or top_p:
+        next_token_ids = torch.gather(indices, dim=-1, index=next_token_ids)
 
-    if top_k:
-        # Need to map back from top-k indices to the original indices if we use top-k
-        next_token = torch.gather(top_k_indices, dim=1, index=next_token)
-
-    return next_token
+    return next_token_ids
 
 
 def parse_args() -> argparse.Namespace:
