@@ -25,9 +25,10 @@ class LayerNorm(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         t, dtype = x.float(), x.dtype
         mean = t.mean(dim=self.normalized_dim, keepdim=True)
-        var = t.var(dim=self.normalized_dim, correction=0, keepdim=True)
+        diff = t - mean
+        var = (diff**2).mean(dim=self.normalized_dim, keepdim=True)
         # Perform math on float32
-        result = (t - mean) * torch.rsqrt(var + self.eps) * self.weight + self.bias
+        result = diff * torch.rsqrt(var + self.eps) * self.weight + self.bias
 
         return result.to(dtype)
 
