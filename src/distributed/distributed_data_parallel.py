@@ -15,7 +15,7 @@ class DistributedDataParallel(nn.Module):
         )
 
         self.model = model
-        self.num_ranks = dist.get_world_size()
+        self.world_size = dist.get_world_size()
 
         # Dynamically grab the device from the first parameter
         first_param = next(model.parameters())
@@ -51,7 +51,7 @@ class DistributedDataParallel(nn.Module):
         # Only sync the active portion of the bucket, not the trailing zeros
         active_bucket = self.bucket[: self.bucket_len]
         dist.all_reduce(active_bucket, op=dist.ReduceOp.SUM)
-        active_bucket /= self.num_ranks
+        active_bucket /= self.world_size
 
         for grad, bucket_view in self.bucket_mapping:
             grad.copy_(bucket_view)
@@ -75,7 +75,7 @@ class DistributedDataParallel(nn.Module):
             # If the tensor is massive, bypass the bucket entirely and sync it immediately
             fp32_grad = param.grad.float()
             dist.all_reduce(fp32_grad, op=dist.ReduceOp.SUM)
-            fp32_grad /= self.num_ranks
+            fp32_grad /= self.world_size
             param.grad.copy_(fp32_grad)
         else:
             # If adding this tensor overflows the CURRENT bucket, flush it first
