@@ -1,4 +1,4 @@
-from .data_parallel import DistributedDataParallel
+from .distributed_data_parallel import DistributedDataParallel
 
 __all__ = ["DistributedDataParallel"]
 
