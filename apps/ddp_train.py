@@ -5,7 +5,7 @@ import torch.distributed as dist
 import torch.nn as nn
 import torch.optim as optim
 
-from distributed import DistributedDataParallel
+from distributed import DistributedDataParallel, ZeroRedundancyOptimizer
 
 
 # 1. A simple dummy model to test distributed training
@@ -48,7 +48,8 @@ def main():
     ddp_model = DistributedDataParallel(model, bucket_cap_mb=2)
 
     # 5. Setup Optimizer and Dummy Data
-    optimizer = optim.Adam(ddp_model.parameters(), lr=1e-3)
+    # We use ZeRO-1 optimizer along with DDP to save memory.
+    optimizer = ZeroRedundancyOptimizer(ddp_model.parameters(), optim.Adam, lr=1e-3)
 
     # Ensure each rank gets DIFFERENT data (micro-batches)
     torch.manual_seed(global_rank)

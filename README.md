@@ -243,7 +243,7 @@ pytest -q tests/tokenizer_test.py
 
 ## Distributed Training
 ```bash
-GLOO_SOCKET_IFNAME=lo0 GLOO_DISABLE_IPV6=1 torchrun --nproc_per_node=2 apps/train.py
+GLOO_SOCKET_IFNAME=lo0 GLOO_DISABLE_IPV6=1 torchrun --nproc_per_node=2 apps/ddp_train.py
 ```
 
 ## 🗺️ Future Work
