@@ -19,7 +19,9 @@ class DistributedDataParallel(nn.Module):
         self.device = first_param.device
 
         self.bucket_max_elements = bucket_cap_mb * 1024 * 1024 // 4
-        self.bucket = torch.zeros(self.bucket_max_elements, device=self.device)
+        self.bucket = torch.zeros(
+            self.bucket_max_elements, device=self.device, dtype=torch.float
+        )
         self.bucket_len = 0
         self.param_map: dict[int, tuple[torch.Tensor, tuple, int, int]] = {}
 
@@ -62,8 +64,10 @@ class DistributedDataParallel(nn.Module):
 
         if total_size > self.bucket_max_elements:
             # If the tensor is massive, bypass the bucket entirely and sync it immediately
-            dist.all_reduce(param.grad, op=dist.ReduceOp.SUM)
-            param.grad /= self.num_ranks
+            fp32_grad = param.grad.float()
+            dist.all_reduce(fp32_grad, op=dist.ReduceOp.SUM)
+            fp32_grad /= self.num_ranks
+            param.grad.copy_(fp32_grad)
         else:
             # If adding this tensor overflows the CURRENT bucket, flush it first
             if self.bucket_len + total_size > self.bucket_max_elements:
