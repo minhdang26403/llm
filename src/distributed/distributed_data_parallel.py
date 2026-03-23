@@ -1,3 +1,6 @@
+import contextlib
+from typing import Iterator
+
 import torch
 import torch.distributed as dist
 import torch.nn as nn
@@ -23,7 +26,9 @@ class DistributedDataParallel(nn.Module):
             self.bucket_max_elements, device=self.device, dtype=torch.float
         )
         self.bucket_len = 0
-        self.param_map: dict[int, tuple[torch.Tensor, tuple, int, int]] = {}
+        self.param_state_map: dict[int, tuple[torch.Tensor, tuple, int, int]] = {}
+
+        self.require_backward_grad_sync = True
 
         self.expected_grads = 0
         self.ready_grads = 0
@@ -48,15 +53,20 @@ class DistributedDataParallel(nn.Module):
         dist.all_reduce(active_bucket, op=dist.ReduceOp.SUM)
         active_bucket /= self.num_ranks
 
-        for _, param_info in self.param_map.items():
+        for _, param_info in self.param_state_map.items():
             grad, shape, start, end = param_info
             grad.copy_(active_bucket[start:end].view(shape))
 
         # Reset bucket state
         self.bucket_len = 0
-        self.param_map = {}
+        self.param_state_map = {}
 
     def _average_grad(self, param: torch.Tensor) -> None:
+        # If no_sync is active, just return. PyTorch will naturally accumulate the
+        # gradient in param.grad locally.
+        if not self.require_backward_grad_sync:
+            return
+
         assert param.grad is not None
 
         self.ready_grads += 1
@@ -78,7 +88,7 @@ class DistributedDataParallel(nn.Module):
             end = self.bucket_len + total_size
             self.bucket[start:end].copy_(param.grad.view(-1))
 
-            self.param_map[id(param)] = (
+            self.param_state_map[id(param)] = (
                 param.grad,
                 param.shape,
                 start,
@@ -93,3 +103,16 @@ class DistributedDataParallel(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.model(x)
+
+    @contextlib.contextmanager
+    def no_sync(self) -> Iterator[None]:
+        """
+        Context manager to disable gradient synchronization across ranks.
+        Useful for gradient accumulation to prevent network overhead.
+        """
+        old_sync_status = self.require_backward_grad_sync
+        self.require_backward_grad_sync = False
+        try:
+            yield
+        finally:
+            self.require_backward_grad_sync = old_sync_status
