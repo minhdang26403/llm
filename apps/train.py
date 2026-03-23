@@ -10,14 +10,19 @@ from distributed import DistributedDataParallel
 
 # 1. A simple dummy model to test distributed training
 class DummyLLM(nn.Module):
-    def __init__(self, hidden_dim=128):
+    def __init__(self, hidden_dim=512, num_layers=6):
         super().__init__()
-        self.fc1 = nn.Linear(hidden_dim, hidden_dim)
+        # Create multiple distinct layers so we have lots of separate parameter tensors
+        self.layers = nn.ModuleList(
+            [nn.Linear(hidden_dim, hidden_dim) for _ in range(num_layers)]
+        )
         self.relu = nn.ReLU()
-        self.fc2 = nn.Linear(hidden_dim, 10)  # 10 classes for dummy task
+        self.fc_out = nn.Linear(hidden_dim, 10)
 
     def forward(self, x):
-        return self.fc2(self.relu(self.fc1(x)))
+        for layer in self.layers:
+            x = self.relu(layer(x))
+        return self.fc_out(x)
 
 
 def main():
@@ -34,12 +39,13 @@ def main():
     # No GPU, so use CPU instead
     device = torch.device("cpu")
 
-    # 4. Instantiate model and move it to the correct GPU BEFORE wrapping
+    # 4. Instantiate model
+    hidden_dim = 512
     print(f"[Rank {global_rank}] Initializing model...")
-    model = DummyLLM().to(device)
+    model = DummyLLM(hidden_dim=hidden_dim).to(device)
 
-    # Wrap it in a custom SPMD DistributedDataParallel class
-    ddp_model = DistributedDataParallel(model)
+    # Force a tiny bucket size to trigger the multi-bucket codepath
+    ddp_model = DistributedDataParallel(model, bucket_cap_mb=2)
 
     # 5. Setup Optimizer and Dummy Data
     optimizer = optim.Adam(ddp_model.parameters(), lr=1e-3)
@@ -47,7 +53,7 @@ def main():
     # Ensure each rank gets DIFFERENT data (micro-batches)
     torch.manual_seed(global_rank)
     batch_size = 32
-    hidden_dim = 128
+    hidden_dim = 512
     dummy_inputs = torch.randn(batch_size, hidden_dim).to(device)
     dummy_targets = torch.randint(0, 10, (batch_size,)).to(device)
     criterion = nn.CrossEntropyLoss()
