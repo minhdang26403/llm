@@ -26,7 +26,7 @@ class DistributedDataParallel(nn.Module):
             self.bucket_max_elements, device=self.device, dtype=torch.float
         )
         self.bucket_len = 0
-        self.param_state_map: dict[int, tuple[torch.Tensor, tuple, int, int]] = {}
+        self.bucket_mapping: list[tuple[torch.Tensor, torch.Tensor]] = []
 
         self.require_backward_grad_sync = True
 
@@ -53,13 +53,12 @@ class DistributedDataParallel(nn.Module):
         dist.all_reduce(active_bucket, op=dist.ReduceOp.SUM)
         active_bucket /= self.num_ranks
 
-        for _, param_info in self.param_state_map.items():
-            grad, shape, start, end = param_info
-            grad.copy_(active_bucket[start:end].view(shape))
+        for grad, bucket_view in self.bucket_mapping:
+            grad.copy_(bucket_view)
 
         # Reset bucket state
         self.bucket_len = 0
-        self.param_state_map = {}
+        self.bucket_mapping.clear()
 
     def _average_grad(self, param: torch.Tensor) -> None:
         # If no_sync is active, just return. PyTorch will naturally accumulate the
@@ -86,14 +85,15 @@ class DistributedDataParallel(nn.Module):
             # Now, safely add the gradient to the bucket
             start = self.bucket_len
             end = self.bucket_len + total_size
-            self.bucket[start:end].copy_(param.grad.view(-1))
 
-            self.param_state_map[id(param)] = (
-                param.grad,
-                param.shape,
-                start,
-                end,
-            )
+            # Create a view of the bucket that shares the same shape as the gradient
+            bucket_view = self.bucket[start:end].view_as(param.grad)
+
+            # Copy the local gradient INTO the bucket
+            bucket_view.copy_(param.grad)
+
+            # Store the tuple (destination_grad, source_view) in our list
+            self.bucket_mapping.append((param.grad, bucket_view))
             self.bucket_len = end
 
         # If this is the absolute last gradient of the backward pass, force a flush
