@@ -241,6 +241,11 @@ Run a specific test suite (e.g., tokenizer validation):
 pytest -q tests/tokenizer_test.py
 ```
 
+## Distributed Training
+```bash
+GLOO_SOCKET_IFNAME=lo0 GLOO_DISABLE_IPV6=1 torchrun --nproc_per_node=2 apps/train.py
+```
+
 ## 🗺️ Future Work
 While the core data pipeline and training scaffolding are complete, the next phase of this project will focus heavily on scaling, distributed systems, and hardware-level optimizations.
 
