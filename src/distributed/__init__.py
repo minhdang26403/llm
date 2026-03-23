@@ -2,7 +2,7 @@ from .distributed_data_parallel import (
     DistributedDataParallel,
     DistributedDataParallelStaticBucket,
 )
-from .zero1 import ZeroRedundancyOptimizer
+from .zero_redundancy_optimizer import ZeroRedundancyOptimizer
 
 __all__ = [
     "DistributedDataParallel",
