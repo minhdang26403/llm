@@ -67,7 +67,9 @@ class FlatParameter(nn.Module):
             dtype=compute_dtype,
             device=self.local_shard.device,
         )
-        dist.all_gather_into_tensor(gathered_params, local_shard_compute)
+
+        with torch.no_grad():
+            dist.all_gather_into_tensor(gathered_params, local_shard_compute)
 
         # We tell Autograd to explicitly track this 1D buffer. The gradient for this
         # buffer is computed after all the gradients of local shards are computed.
@@ -114,8 +116,8 @@ class FlatParameter(nn.Module):
 
         # 3. Reduce the gradients across data partitions and scatter the correct chunk
         # of gradients for this local shard.
-        chunks = list(torch.chunk(full_grad, self.world_size))
-        dist.reduce_scatter_tensor(local_grad_chunk, chunks)
+        with torch.no_grad():
+            dist.reduce_scatter_tensor(local_grad_chunk, full_grad)
 
         # 4. Assign the resulting chunk directly to our master weight's .grad attribute
         self.local_shard.grad = local_grad_chunk
@@ -147,6 +149,7 @@ class FullyShardedDataParallel(nn.Module):
         self.flat_param = FlatParameter(module)
 
         self._register_forward_hooks()
+        self._register_backward_hooks()
 
     def _register_forward_hooks(self):
         """
