@@ -53,6 +53,7 @@ def main():
     # 4. Dummy Data
     batch_size = 4
     x = torch.randn(batch_size, hidden_dim)
+    x.requires_grad_()
     target = torch.randn(batch_size, hidden_dim)
     criterion = nn.MSELoss()
 
