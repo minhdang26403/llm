@@ -18,7 +18,7 @@ class FlatParameter(nn.Module):
         params_to_flatten = []
 
         # Extract parameter info before we destroy the module's attributes
-        for name, param in module.named_parameters(recurse=False):
+        for name, param in module.named_parameters(recurse=True):
             if param is not None:
                 self.param_metadata.append(
                     (name, param.shape, param.dtype, param.numel())
@@ -49,11 +49,13 @@ class FlatParameter(nn.Module):
         self.local_shard = nn.Parameter(flat_params[start_idx:end_idx].clone().detach())
 
         for name, _, _, _ in self.param_metadata:
+            submod, param_name = self._get_submodule_and_param_name(name)
+
             # Delete the original parameter to free the VRAM
-            delattr(self.module, name)
+            delattr(submod, param_name)
             # Leave a breadcrumb so the forward pass doesn't instantly crash before our
             # hooks can rebuild it
-            setattr(self.module, name, None)
+            setattr(submod, param_name, None)
 
     def unshard(self, compute_dtype=torch.float16, post_backward_hook_fn=None):
         if self.local_shard is None:
@@ -81,7 +83,8 @@ class FlatParameter(nn.Module):
         for name, shape, dtype, numel in self.param_metadata:
             end_idx = start_idx + numel
             param = gathered_params[start_idx:end_idx].view(shape).to(dtype)
-            setattr(self.module, name, param)
+            submod, param_name = self._get_submodule_and_param_name(name)
+            setattr(submod, param_name, param)
             start_idx += numel
 
     def reshard(self):
@@ -89,9 +92,10 @@ class FlatParameter(nn.Module):
             return
 
         for name, _, _, _ in self.param_metadata:
-            if hasattr(self.module, name):
-                delattr(self.module, name)
-                setattr(self.module, name, None)
+            submod, param_name = self._get_submodule_and_param_name(name)
+            if hasattr(submod, param_name):
+                delattr(submod, param_name)
+                setattr(submod, param_name, None)
 
     def reduce_scatter_gradients(self, full_grad):
         """
@@ -115,6 +119,13 @@ class FlatParameter(nn.Module):
 
         # 4. Assign the resulting chunk directly to our master weight's .grad attribute
         self.local_shard.grad = local_grad_chunk
+
+    def _get_submodule_and_param_name(self, name: str) -> tuple[nn.Module, str]:
+        # Parse the dotted path (e.g., "ffn.0.weight" -> "ffn.0" and "weight")
+        atoms = name.rsplit(".", 1)
+        submod = self.module.get_submodule(atoms[0]) if len(atoms) == 2 else self.module
+        param_name = atoms[-1]
+        return submod, param_name
 
 
 class ShardingStrategy(Enum):
