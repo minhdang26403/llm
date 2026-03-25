@@ -184,6 +184,42 @@ class FullyShardedDataParallel(nn.Module):
         self.module.register_full_backward_pre_hook(backward_pre_hook)
 
     def forward(self, *args, **kwargs):
-        # We simply pass the inputs down to the inner module.
-        # The hooks we registered will automatically intercept the math.
-        return self.module(*args, **kwargs)
+        # We only need this Autograd cache hack for ZeRO-3.
+        # ZeRO-2 leaves the weights in VRAM, so standard saving is perfectly fine.
+        if self.sharding_strategy != ShardingStrategy.FULL_SHARD:
+            return self.module(*args, **kwargs)
+
+        def pack_hook(tensor):
+            # Autograd wants to save a tensor.
+            # Check whether it is one of our FSDP weights.
+            for name, _, _, _ in self.flat_param.param_metadata:
+                submod, param_name = self.flat_param._get_submodule_and_param_name(name)
+                param = getattr(submod, param_name, None)
+
+                # If it is our weight, do not save it.
+                # Save a lightweight string tuple instead to break the internal
+                # memory reference.
+                if tensor is param:
+                    return ("FSDP_PARAM", name)
+
+            # If it is a normal tensor (like an intermediate activation),
+            # save it normally.
+            return ("NORMAL", tensor)
+
+        def unpack_hook(packed_info):
+            marker, payload = packed_info
+
+            if marker == "FSDP_PARAM":
+                name = payload
+                # Autograd needs the weight back for the gradient math!
+                # Because our backward_pre_hook already fired unshard(),
+                # the newly gathered weight is sitting perfectly on the module.
+                submod, param_name = self.flat_param._get_submodule_and_param_name(name)
+                return getattr(submod, param_name)
+
+            # If it was a normal tensor, just return it natively.
+            return payload
+
+        # Wrap the forward pass in the context manager to intercept the Autograd cache!
+        with torch.autograd.graph.saved_tensors_hooks(pack_hook, unpack_hook):
+            return self.module(*args, **kwargs)
