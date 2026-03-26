@@ -41,6 +41,7 @@ llm/
 │   ├── prepare_data_workers.py     # Multiprocessing workers for pretokenization
 │   ├── dataset.py                  # Memmap dataset over pretokenized token IDs
 │   ├── train.py                    # Model training entrypoint (GPT/Llama)
+│   ├── generate.py                 # Interactive generation CLI (GPT/Llama)
 │   ├── models/
 │   │   ├── config.py               # Model config classes and defaults
 │   │   ├── gpt.py                  # GPT model and blocks
@@ -167,14 +168,38 @@ GLOO_SOCKET_IFNAME=lo0 GLOO_DISABLE_IPV6=1 torchrun --nproc_per_node=2 apps/ddp_
 GLOO_SOCKET_IFNAME=lo0 GLOO_DISABLE_IPV6=1 torchrun --nproc_per_node=2 apps/fsdp_train.py
 ```
 
-## 🔮 Inference & Generation (Work in Progress)
-While the offline data pipeline and online training loops are fully operational, the inference engine is currently under active development.
+## 🔮 Inference & Generation
+The repository now includes an end-to-end text generation pipeline in `src/generate.py`. It loads trained checkpoints, restores the tokenizer, and serves an interactive CLI for both GPT and Llama variants.
 
-The goal of this module is to efficiently load the trained checkpoints and serve the model for interactive text generation. Future updates to this repository will include a from-scratch implementation of the inference infrastructure, specifically focusing on:
+Implemented capabilities:
 
-- **KV Caching:** Implementing key-value caches to prevent redundant attention matrix computations during autoregressive decoding.
-- **Sampling Strategies:** Adding configurable temperature, top-k, and top-p sampling for high-quality text generation.
-- **Interactive CLI:** A command-line interface to feed prompts into the loaded GPT or Llama variants and stream the generated text back to the user.
+- **KV Cache Support:** Attention layers include KV cache buffers and cache reset hooks for autoregressive decoding.
+- **Configurable Sampling:** Next-token decoding supports temperature scaling, top-k filtering, top-p (nucleus) sampling, and greedy decoding (`temperature=0.0`).
+- **Interactive CLI:** Prompt-response loop with `exit`/`quit` controls, argument validation, and automatic device selection (`cuda` -> `mps` -> `cpu`).
+- **Checkpoint + Tokenizer Loading:** Generation loads model weights from `checkpoints/best_model.pt` by default and tokenizer state from `weights/bpe_tokenizer.json`.
+
+Run interactive generation with GPT:
+```bash
+python src/generate.py gpt \
+  --checkpoint checkpoints/best_model.pt \
+  --tokenizer weights/bpe_tokenizer.json \
+  --temperature 0.8 \
+  --top-k 50 \
+  --top-p 0.95 \
+  --max-generated-tokens 128
+```
+
+Run interactive generation with Llama:
+```bash
+python src/generate.py llama \
+  --checkpoint checkpoints/best_model.pt \
+  --tokenizer weights/bpe_tokenizer.json
+```
+
+Notes:
+- Generation currently uses a context window of `256` tokens.
+- Prompts longer than the context window are rejected with a validation error.
+- Decoding stops early if `<|endoftext|>` is generated.
 
 ## ⏱️ Profiling & Performance
 Because this project is heavily focused on systems optimization, profiling tools are used extensively to identify and eliminate CPU, I/O, and memory bottlenecks.
