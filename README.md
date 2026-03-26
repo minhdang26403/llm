@@ -147,6 +147,26 @@ The training loop includes built-in scaffolding for periodic validation against 
 
 During training, model checkpoints are saved to the `checkpoints/` directory by default (or a custom path via `--output-dir`). These artifacts can be loaded later to resume training from an exact step or to perform offline text generation.
 
+### Distributed Training
+The project also implements the following classes to support distributed training:
+- `DistributedDataParallel`: Standard Data Parallelism. A global batch of size $B$ will be sharded across nodes into mini-batches, each of size $B/ N$ where $N$ is the number of node. The model is entirely replicated, that is, each node in the cluster holds a 100% identical copy of the model weights.
+- `ZeroRedundancyOptimizer`: The Zero Redundancy Optimizer proposed in the paper [ZeRO: Memory Optimizations Toward Training Trillion Parameter Models](https://arxiv.org/abs/1910.02054). This class implements ZeRO-1 variant, which only shards the optimizer state.
+- `FullyShardedDataParallel`: This class supports two mode: shards gradients only or shards both gradients and model's weights. When using `FullyShardedDataParallel` along with `ZeroRedundancyOptimizer`, we can achieve ZeRO-2 or ZeRO-3 depending on the sharding strategy we give `FullyShardedDataParallel`.
+
+Note that we can use `ZeroRedundancyOptimizer` with any of the data parallel wrappers since the optimizer is decoupled from the model by design.
+
+There are two sample training scripts that use these containers:
+
+1. Training with Distributed Data Parallelism
+```bash
+GLOO_SOCKET_IFNAME=lo0 GLOO_DISABLE_IPV6=1 torchrun --nproc_per_node=2 apps/ddp_train.py
+```
+
+2. Training with Fully Sharded Data Parallelism
+```bash
+GLOO_SOCKET_IFNAME=lo0 GLOO_DISABLE_IPV6=1 torchrun --nproc_per_node=2 apps/fsdp_train.py
+```
+
 ## 🔮 Inference & Generation (Work in Progress)
 While the offline data pipeline and online training loops are fully operational, the inference engine is currently under active development.
 
@@ -239,11 +259,6 @@ pytest -q tests
 Run a specific test suite (e.g., tokenizer validation):
 ```bash
 pytest -q tests/tokenizer_test.py
-```
-
-## Distributed Training
-```bash
-GLOO_SOCKET_IFNAME=lo0 GLOO_DISABLE_IPV6=1 torchrun --nproc_per_node=2 apps/ddp_train.py
 ```
 
 ## 🗺️ Future Work
