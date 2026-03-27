@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import time
 from dataclasses import asdict
 from pathlib import Path
 
@@ -40,7 +41,12 @@ def parse_args() -> argparse.Namespace:
         help="Optional validation dataset .bin file (uint32 token ids).",
     )
     parser.add_argument("--num-epochs", type=int, default=1, help="Training epochs.")
-    parser.add_argument("--batch-size", type=int, default=32, help="Batch size.")
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=32,
+        help="Per-rank (local) batch size.",
+    )
     parser.add_argument(
         "--num-workers", type=int, default=4, help="DataLoader workers."
     )
@@ -260,7 +266,29 @@ def main() -> None:  # noqa: C901
         )
         train_loader = build_dataloader(train_dataset, args, device, train_sampler)
         if rank == 0:
-            print("Number of iterations per epoch per rank:", len(train_loader))
+            local_batch_size = args.batch_size
+            global_batch_size = args.batch_size * world_size
+            steps_per_epoch = len(train_loader)
+            batches_per_rank = steps_per_epoch
+            aggregate_rank_batches = batches_per_rank * world_size
+            samples_per_rank = train_sampler.num_samples
+            dataset_samples = len(train_dataset)
+            distributed_total_samples = samples_per_rank * world_size
+            sampler_padding = distributed_total_samples - dataset_samples
+
+            print("Batching summary:")
+            print(f"  dataset_samples: {dataset_samples:,}")
+            print(f"  local_batch_size_per_rank: {local_batch_size}")
+            print(f"  effective_global_batch_size: {global_batch_size}")
+            print(f"  samples_per_rank_per_epoch: {samples_per_rank:,}")
+            print(
+                "  distributed_total_samples_per_epoch: "
+                f"{distributed_total_samples:,}"
+            )
+            print(f"  sampler_padding_samples_per_epoch: {sampler_padding:,}")
+            print(f"  optimizer_steps_per_epoch (global batches): {steps_per_epoch:,}")
+            print(f"  batches_per_rank_per_epoch: {batches_per_rank:,}")
+            print(f"  aggregate_rank_batches_per_epoch: {aggregate_rank_batches:,}")
 
         val_loader = None
         if args.val_dataset_path is not None:
@@ -287,6 +315,8 @@ def main() -> None:  # noqa: C901
 
         for epoch in range(args.num_epochs):
             train_sampler.set_epoch(epoch)
+            log_window_start = time.perf_counter()
+            log_window_steps = 0
 
             for _, (inputs, targets) in enumerate(train_loader):
                 # Shape: (batch_size, seq_len)
@@ -309,15 +339,47 @@ def main() -> None:  # noqa: C901
                 scheduler.step()
 
                 global_step += 1
+                log_window_steps += 1
                 if global_step % args.log_every == 0:
                     reduced_loss = loss.detach().clone()
                     dist.all_reduce(reduced_loss, op=dist.ReduceOp.SUM)
                     reduced_loss /= world_size
+
+                    # Windowed wall-time observability: how long the recent
+                    # `log_every` steps took.
+                    window_elapsed_local = time.perf_counter() - log_window_start
+                    window_elapsed_max = torch.tensor(
+                        window_elapsed_local, device=device, dtype=torch.float64
+                    )
+                    dist.all_reduce(window_elapsed_max, op=dist.ReduceOp.MAX)
+                    window_elapsed_seconds = window_elapsed_max.item()
+
+                    avg_step_seconds = window_elapsed_seconds / max(1, log_window_steps)
+                    global_samples_in_window = (
+                        args.batch_size * world_size * log_window_steps
+                    )
+                    global_tokens_in_window = (
+                        global_samples_in_window * config.max_seq_len
+                    )
+                    global_samples_per_sec = global_samples_in_window / max(
+                        window_elapsed_seconds, 1e-12
+                    )
+                    global_tokens_per_sec = global_tokens_in_window / max(
+                        window_elapsed_seconds, 1e-12
+                    )
+
                     if rank == 0:
                         print(
                             f"epoch={epoch} step={global_step} "
-                            f"loss={reduced_loss.item():.4f}"
+                            f"loss={reduced_loss.item():.4f} "
+                            f"window_steps={log_window_steps} "
+                            f"window_time_s={window_elapsed_seconds:.3f} "
+                            f"avg_step_time_s={avg_step_seconds:.3f} "
+                            f"global_samples_per_s={global_samples_per_sec:.1f} "
+                            f"global_tokens_per_s={global_tokens_per_sec:.1f}"
                         )
+                    log_window_start = time.perf_counter()
+                    log_window_steps = 0
 
                 if val_loader is not None and global_step % args.val_every == 0:
                     val_loss = validate(ddp_model, val_loader, device, criterion)
