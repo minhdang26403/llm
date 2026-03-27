@@ -46,7 +46,7 @@ class FlatParameter(nn.Module):
 
         # Create the local weight shard and register it as a parameter of the
         # FlatParameter class so the optimizer can find it later
-        self.local_shard = nn.Parameter(flat_params[start_idx:end_idx].clone().detach())
+        self.local_shard = nn.Parameter(flat_params[start_idx:end_idx].detach().clone())
 
         for name, _, _, _ in self.param_metadata:
             submod, param_name = self._get_submodule_and_param_name(name)
@@ -69,13 +69,21 @@ class FlatParameter(nn.Module):
         )
 
         with torch.no_grad():
+            # The AllGather operation is tracked for gradient since the input
+            # `local_shard_compute` requires gradient.
+            # However, PyTorch does not allow in-place modifications on a tensor that
+            # is being tracked for gradients, which is `gathered_params` in this case.
             dist.all_gather_into_tensor(gathered_params, local_shard_compute)
 
-        # We tell Autograd to explicitly track this 1D buffer. The gradient for this
-        # buffer is computed after all the gradients of local shards are computed.
+        # Track gradient for this flat params buffer since weight matrices of this
+        # module are just views onto this buffer. If we don't track gradient for it, the
+        # module stop learning.
         gathered_params.requires_grad_()
+
         if post_backward_hook_fn:
-            # The hook will trigger to reduce gradients across GPUs.
+            # The hook will trigger after gradients of all local shards are computed.
+            # Note the gradients are computed for individual params first before
+            # gradients for `gathered_params` being computed.
             gathered_params.register_hook(post_backward_hook_fn)
 
         if self.pad_len > 0:
@@ -104,6 +112,11 @@ class FlatParameter(nn.Module):
         Receives the full gradients (for this data partition), reduces them across GPUs,
         and scatters the 1/N chunk (partitioned by parameters) to our local master
         shard.
+
+        Paramters:
+            full_grad (1D buffer): gradients of the `gathered_params` buffer in the
+                `unshard` function since we register a hook on this tensor in the
+                forward pass.
         """
 
         # 1. We need an empty buffer to hold our specific 1/N gradient chunk.
@@ -164,6 +177,10 @@ class FullyShardedDataParallel(nn.Module):
                 self.flat_param.reshard()
 
             # 2. Pass this hook down into unshard so it gets attached to the buffer
+            # We attach hook directly to the gathered params buffer to overlap the
+            # network communication with the input's gradient computation.
+            # If we use `register_full_backward_hook`, we need to wait for the input's
+            # gradient computation to finish before reducing the parameters' gradients.
             self.flat_param.unshard(post_backward_hook_fn=post_backward_tensor_hook)
 
         self.module.register_forward_pre_hook(forward_pre_hook)
@@ -197,8 +214,8 @@ class FullyShardedDataParallel(nn.Module):
                 param = getattr(submod, param_name, None)
 
                 # If it is our weight, do not save it.
-                # Save a lightweight string tuple instead to break the internal
-                # memory reference.
+                # Save a lightweight string tuple instead to break the internal memory
+                # reference.
                 if tensor is param:
                     return ("FSDP_PARAM", name)
 
@@ -213,7 +230,7 @@ class FullyShardedDataParallel(nn.Module):
                 name = payload
                 # Autograd needs the weight back for the gradient math!
                 # Because our backward_pre_hook already fired unshard(),
-                # the newly gathered weight is sitting perfectly on the module.
+                # the newly gathered weight is available on the module.
                 submod, param_name = self.flat_param._get_submodule_and_param_name(name)
                 return getattr(submod, param_name)
 
