@@ -152,9 +152,14 @@ During training, model checkpoints are saved to the `checkpoints/` directory by 
 The project also implements the following classes to support distributed training:
 - `DistributedDataParallel`: Standard Data Parallelism. A global batch of size $B$ will be sharded across nodes into mini-batches, each of size $B/ N$ where $N$ is the number of node. The model is entirely replicated, that is, each node in the cluster holds a 100% identical copy of the model weights.
 - `ZeroRedundancyOptimizer`: The Zero Redundancy Optimizer proposed in the paper [ZeRO: Memory Optimizations Toward Training Trillion Parameter Models](https://arxiv.org/abs/1910.02054). This class implements ZeRO-1 variant, which only shards the optimizer state.
-- `FullyShardedDataParallel`: This class supports two mode: shards gradients only or shards both gradients and model's weights. When using `FullyShardedDataParallel` along with `ZeroRedundancyOptimizer`, we can achieve ZeRO-2 or ZeRO-3 depending on the sharding strategy we give `FullyShardedDataParallel`.
+- `FullyShardedDataParallel`: This class supports two mode: shards gradients only or shards both gradients and model's weights. When using `FullyShardedDataParallel` along standard optimizer like Adam, we can achieve ZeRO-2 or ZeRO-3 depending on the sharding strategy we give `FullyShardedDataParallel`.
 
-Note that we can use `ZeroRedundancyOptimizer` with any of the data parallel wrappers since the optimizer is decoupled from the model by design.
+Summary:
+- DDP + ZeroRedundancyOptimizer = ZeRO-1 (Optimizer State Partitioning)
+- FSDP + Standard Optimizer + SHARD_GRAD_OP sharding strategy = ZeRO-2
+- FSDP + Standard Optimizer + FULL_SHARD sharding strategy = ZeRO-3
+
+Note that we cannot use `ZeroRedundancyOptimizer` with FSDP since FSDP already shards the model weights and gradients, and its sharding is incompatiable with how the `ZeroRedundancyOptimizer` shards the optimizer state.
 
 There are two sample training scripts that use these containers:
 
