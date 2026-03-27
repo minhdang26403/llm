@@ -113,6 +113,22 @@ class ZeroRedundancyOptimizer:
         Returns:
             Optional[float]: The loss returned by the closure, if provided;
                 otherwise, None.
+
+
+        Optimization:
+        Note that in this implementation, we only update the model's parameters after
+        all of their gradients are computed. However, we can overlap the gradient
+        computation with the weight update.
+
+        Specifically, we can use Bucket-Level Stepping:
+        1. Bucketing: Instead of flattening the whole model, we flatten parameters into
+            smaller chunks (e.g., 25MB buckets)
+        2. Autograd Hooks: Attach a post-backward Autograd hook to each parameter.
+        3. Accumulate tensors into a bucket: Once a parameter's gradient is computed,
+            the hook is called, and we add the gradient into the bucket.
+        4. Gradient Sync: When the bucket reaches its capacity, we use reduction
+            operation to compute the averaged gradient across all GPUs.
+        5.  Micro-Step: Call a micro-optimizer step just for that specific 25MB bucket.
         """
 
         # 1. Flatten all individual gradients into a single list
