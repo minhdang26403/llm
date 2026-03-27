@@ -53,10 +53,8 @@ class ZeroRedundancyOptimizer:
         # We need these later to push the updated weights back into the model
         self.model_params = list(params)
 
-        # 3. Flatten the model parameters into a single 1D tensor
-        # CRITICAL: We immediately cast to FP32 because ZeRO-1 requires
-        # high-precision "master weights" for the optimizer to update safely.
-        flat_params = nn.utils.parameters_to_vector(self.model_params).float()
+        # 3. Flatten the model parameters into a single 1D tensor.
+        flat_params = nn.utils.parameters_to_vector(self.model_params)
 
         # 4. Calculate Padding
         # The network requires equal sized chunks across all GPUs.
@@ -75,13 +73,20 @@ class ZeroRedundancyOptimizer:
         self.end_idx = self.start_idx + shard_size
 
         # 6. Extract the local shard
-        # We use .clone().detach() to break it off from the model's autograd graph.
-        # It needs to be a clean "leaf node" so the optimizer can update it.
-        self.local_param = flat_params[self.start_idx : self.end_idx].clone().detach()
+        # This creates a view to the original tensor, not a copy.
+        local_slice = flat_params[self.start_idx : self.end_idx]
+
+        # We detach the tensor to break it off from the model's autograd graph.
+        # Still shares memory with flat_params.
+        detached_slice = local_slice.detach()
+
+        # Cast to FP32 because ZeRO-1 requires high-precision "master weights" for the
+        # optimizer to update safely.
+        self.local_param = detached_slice.float()
         self.local_param.requires_grad = True
 
         # 7. Initialize the underlying optimizer (e.g., optim.Adam)
-        # Notice we ONLY pass it our specific 1D slice, drastically reducing memory!
+        # Notice we ONLY pass it our specific 1D slice, drastically reducing memory.
         self.optim = optimizer_class([self.local_param], **defaults)
 
         # We expose param_groups to comply with PyTorch's standard Optimizer API
