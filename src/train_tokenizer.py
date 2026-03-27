@@ -48,8 +48,11 @@ def main() -> None:
         raise ValueError(f"Dataset path must be a file: {dataset_path}")
 
     special_tokens_list = ["<|endoftext|>", "<|im_start|>", "<|im_end|>", "<|im_sep|>"]
+
+    # Keep special tokens within the configured max vocabulary.
+    first_special_token_id = args.vocab_size - len(special_tokens_list)
     special_tokens_dict = {
-        token: args.vocab_size + i + 1 for i, token in enumerate(special_tokens_list)
+        token: first_special_token_id + i for i, token in enumerate(special_tokens_list)
     }
 
     tokenizer = Tokenizer(

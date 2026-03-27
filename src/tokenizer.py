@@ -242,15 +242,20 @@ class Tokenizer:
 
         # Inverse map for decode: token_id -> bytes for special tokens only.
         self.inverse_special_tokens: dict[TokenId, bytes] = {}
+        # IDs reserved for special tokens inside [0, vocab_size).
+        # These IDs are skipped by the merge-id allocator.
+        self.special_token_ids_in_vocab: set[TokenId] = set()
         for token, token_id in self.special_tokens.items():
-            if token_id < self.vocab_size:
+            if token_id < BASE_VOCAB_SIZE:
                 raise ValueError(
-                    f"special token id {token_id} must be >= vocab_size "
-                    f"({self.vocab_size}); ids in [0, vocab_size) are reserved"
+                    f"special token id {token_id} must be >= {BASE_VOCAB_SIZE} "
+                    "(byte-level token IDs 0..255 are reserved)"
                 )
             if token_id in self.inverse_special_tokens:
                 raise ValueError(f"duplicate special token id {token_id}")
             self.inverse_special_tokens[token_id] = token.encode("utf-8")
+            if token_id < self.vocab_size:
+                self.special_token_ids_in_vocab.add(token_id)
 
         # Regex to split text on special token boundaries (capturing group).
         self.special_tokens_pattern = _compile_special_tokens_pattern(
@@ -365,16 +370,36 @@ class Tokenizer:
                 f"elapsed={stage3_elapsed:.2f}s"
             )
 
-        num_merges = self.vocab_size - len(self.vocab)
+        target_regular_vocab_size = self.vocab_size - len(
+            self.special_token_ids_in_vocab
+        )
+        if target_regular_vocab_size < BASE_VOCAB_SIZE:
+            raise ValueError(
+                "vocab_size is too small after reserving special tokens. "
+                f"Need at least "
+                f"{BASE_VOCAB_SIZE + len(self.special_token_ids_in_vocab)} "
+                f"but got {self.vocab_size}."
+            )
+        if len(self.vocab) > target_regular_vocab_size:
+            raise ValueError(
+                "current regular vocab is already larger than the configured target. "
+                f"current_regular_vocab_size={len(self.vocab)}, "
+                f"target_regular_vocab_size={target_regular_vocab_size}"
+            )
+
+        num_merges = target_regular_vocab_size - len(self.vocab)
         progress_interval = max(100, num_merges // 20) if num_merges > 0 else 1
         if verbose:
             print(
                 "Starting tokenizer merge loop: "
                 f"target_vocab_size={self.vocab_size}, "
+                f"reserved_special_tokens={len(self.special_token_ids_in_vocab)}, "
+                f"target_regular_vocab_size={target_regular_vocab_size}, "
                 f"planned_merges={num_merges}, "
                 f"progress_interval={progress_interval}"
             )
 
+        next_merge_token_id = BASE_VOCAB_SIZE
         for _ in range(num_merges):
             if not pair_counts:
                 break
@@ -390,7 +415,19 @@ class Tokenizer:
                 )
 
             # Pick highest-frequency pair (deterministic tie-break by pair value).
-            new_id = len(self.vocab)
+            # Skip reserved special-token IDs to avoid collisions.
+            while (
+                next_merge_token_id in self.vocab
+                or next_merge_token_id in self.special_token_ids_in_vocab
+            ):
+                next_merge_token_id += 1
+            if next_merge_token_id >= self.vocab_size:
+                raise RuntimeError(
+                    "No available merge token IDs left within vocab_size. "
+                    "Adjust vocab_size or special token IDs."
+                )
+            new_id = next_merge_token_id
+            next_merge_token_id += 1
             self.vocab[new_id] = self.vocab[best_pair[0]] + self.vocab[best_pair[1]]
             self.merge_rules[best_pair] = new_id
 
@@ -447,7 +484,8 @@ class Tokenizer:
             elapsed = time.perf_counter() - train_start
             print(
                 "Tokenizer training completed: "
-                f"final_vocab_size={len(self.vocab)}, "
+                f"final_regular_vocab_size={len(self.vocab)}, "
+                f"final_total_vocab_size={len(self.unified_vocab)}, "
                 f"elapsed={elapsed:.2f}s"
             )
 
