@@ -242,6 +242,15 @@ Conceptually:
 
 This TP implementation is designed to be composable with the rest of the distributed infrastructure, enabling hybrid strategies such as DP + TP for larger models.
 
+### Sequence Parallelism
+In addition to Tensor Parallelism, the project also supports Sequence Parallelism to reduce activation memory footprint (especially around norm/dropout-heavy regions in Transformer blocks).
+
+This mode is implemented directly in `ColumnParallelLinear` and `RowParallelLinear` via the `sequence_parallel` flag:
+- `ColumnParallelLinear(sequence_parallel=True)`: gathers sequence shards first using `gather_from_sequence_parallel_region(...)`, then applies the local column-partitioned linear.
+- `RowParallelLinear(sequence_parallel=True)`: applies the local row-partitioned linear, then uses `reduce_scatter_to_sequence_parallel_region(...)` to return a sequence-partitioned output.
+
+These operations are backed by custom autograd mappings in `src/distributed/tensor_parallel/parallel_tensor_ops.py`, so forward/backward communication is handled explicitly for sequence-sharded activations.
+
 ## ⏱️ Profiling & Performance
 Because this project is heavily focused on systems optimization, profiling tools are used extensively to identify and eliminate CPU, I/O, and memory bottlenecks.
 
