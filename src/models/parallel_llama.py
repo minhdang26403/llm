@@ -2,7 +2,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 
-from distributed.tensor_parallel.layers import ParallelAttention, ParallelSwiGLU
+from distributed.tensor_parallel import ParallelAttention, ParallelSwiGLU
 from layers.norm import RMSNorm
 from layers.positional_embedding import RotaryPositionalEmbedding
 from models.config import LlamaConfig

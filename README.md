@@ -32,41 +32,43 @@ The codebase is strictly separated into modular components, isolating the offlin
 
 ```text
 llm/
-├── apps/                           # Sample distributed launch scripts
+├── apps/                                   # Sample distributed launch scripts
 │   ├── ddp_train.py
 │   └── fsdp_train.py
-├── data/                           # Raw text and pretokenized .bin datasets
-├── perf/                           # Profiling artifacts and reports
+├── data/                                   # Raw text and pretokenized .bin datasets
+├── perf/                                   # Profiling artifacts and reports
 ├── src/
-│   ├── tokenizer.py                # BPE tokenizer (train/save/load/encode/decode)
-│   ├── train_tokenizer.py          # CLI to train and save tokenizer weights
-│   ├── prepare_data.py             # Offline pretokenization pipeline (.txt -> .bin)
-│   ├── prepare_data_workers.py     # Multiprocessing workers for pretokenization
-│   ├── dataset.py                  # Memmap dataset over pretokenized token IDs
-│   ├── train.py                    # Model training entrypoint (GPT/Llama)
-│   ├── generate.py                 # Interactive generation CLI (GPT/Llama)
-│   ├── distributed/                # Distributed training and parallelism
-│   │   ├── __init__.py             # Public distributed API exports
-│   │   ├── distributed_data_parallel.py
-│   │   ├── zero_redundancy_optimizer.py
-│   │   ├── fully_sharded_data_parallel.py
+│   ├── tokenizer.py                        # BPE tokenizer (train/save/load/encode/decode)
+│   ├── train_tokenizer.py                  # CLI to train and save tokenizer weights
+│   ├── prepare_data.py                     # Offline pretokenization pipeline (.txt -> .bin)
+│   ├── prepare_data_workers.py             # Multiprocessing workers for pretokenization
+│   ├── dataset.py                          # Memmap dataset over pretokenized token IDs
+│   ├── train.py                            # Model training entrypoint (GPT/Llama)
+│   ├── generate.py                         # Interactive generation CLI (GPT/Llama)
+│   ├── distributed/                        # Distributed training and parallelism
+│   │   ├── __init__.py                     # Public distributed API exports
+│   │   ├── distributed_data_parallel.py    # Distributed data parallelism
+│   │   ├── zero_redundancy_optimizer.py    # Zero redundancy optimizer (ZeRO-1)
+│   │   ├── fully_sharded_data_parallel.py  # Fully sharded data parallelism (ZeRO-2/3)
 │   │   └── tensor_parallel/
 │   │       ├── __init__.py
-│   │       ├── mappings.py         # TP autograd collective mappings
-│   │       └── layers.py           # TP linear/attention/FFN layers
+│   │       ├── parallel_tensor_ops.py      # TP autograd collective ops
+│   │       ├── parallel_linear.py          # Column/row parallel linear layers
+│   │       ├── parallel_attention.py       # Tensor-parallel self-attention
+│   │       └── parallel_swiglu.py          # Tensor-parallel SwiGLU FFN
 │   ├── models/
-│   │   ├── config.py               # Model config classes and defaults
-│   │   ├── gpt.py                  # GPT model and blocks
-│   │   ├── llama.py                # Llama model and blocks
-│   │   └── parallel_llama.py       # Tensor-parallel Llama model and blocks
-│   └── layers/                     # Reusable building blocks
-│       ├── attention.py            # Causal attention, GQA/MQA support
-│       ├── positional_embedding.py # Sinusoidal + RoPE
-│       ├── norm.py                 # LayerNorm / RMSNorm
-│       ├── activation.py           # SwiGLU
-│       └── dropout.py              # Dropout layer
-├── tests/                          # Unit tests
-├── weights/                        # Saved tokenizer/model artifacts
+│   │   ├── config.py                       # Model config classes and defaults
+│   │   ├── gpt.py                          # GPT model and blocks
+│   │   ├── llama.py                        # Llama model and blocks
+│   │   └── parallel_llama.py               # Tensor-parallel Llama model and blocks
+│   └── layers/                             # Reusable building blocks
+│       ├── attention.py                    # Causal attention, GQA/MQA support
+│       ├── positional_embedding.py         # Sinusoidal + RoPE
+│       ├── norm.py                         # LayerNorm / RMSNorm
+│       ├── activation.py                   # SwiGLU
+│       └── dropout.py                      # Dropout layer
+├── tests/                                  # Unit tests
+├── weights/                                # Saved tokenizer/model artifacts
 └── README.md
 ```
 
