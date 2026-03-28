@@ -1,3 +1,5 @@
+from typing import Any
+
 import torch
 import torch.distributed as dist
 
@@ -55,6 +57,116 @@ class _ReduceFromModelParallelRegion(torch.autograd.Function):
         return grad_output, None
 
 
+class _GatherFromSequenceParallelRegion(torch.autograd.Function):
+    @staticmethod
+    def forward(
+        ctx, input_tensor: torch.Tensor, tp_group: dist.ProcessGroup
+    ) -> torch.Tensor:
+        if tp_group is None:
+            return input_tensor
+
+        ctx.tp_group = tp_group
+
+        transposed_input = input_tensor.transpose(0, 1).contiguous()
+        partition_seq_len, batch_size, embed_dim = transposed_input.shape
+
+        world_size = dist.get_world_size(group=tp_group)
+        full_seq_len = partition_seq_len * world_size
+
+        output = torch.empty(
+            (full_seq_len, batch_size, embed_dim),
+            dtype=input_tensor.dtype,
+            device=input_tensor.device,
+        )
+
+        dist.all_gather_into_tensor(output, transposed_input, group=tp_group)
+
+        return output.transpose(0, 1).contiguous()
+
+    @staticmethod
+    def backward(ctx, *grad_outputs: torch.Tensor) -> tuple[torch.Tensor, Any]:
+        grad_output = grad_outputs[0]
+        tp_group = ctx.tp_group
+        if tp_group is None:
+            return grad_output, None
+
+        transposed_grad = grad_output.transpose(0, 1).contiguous()
+        full_seq_len, batch_size, embed_dim = transposed_grad.shape
+
+        world_size = dist.get_world_size(group=tp_group)
+        partition_seq_len = full_seq_len // world_size
+
+        partitioned_grad = torch.empty(
+            (partition_seq_len, batch_size, embed_dim),
+            dtype=grad_output.dtype,
+            device=grad_output.device,
+        )
+
+        dist.reduce_scatter_tensor(
+            partitioned_grad,
+            transposed_grad,
+            op=dist.ReduceOp.SUM,
+            group=tp_group,
+        )
+
+        return partitioned_grad.transpose(0, 1).contiguous(), None
+
+
+class _ReduceScatterToSequenceParallelRegion(torch.autograd.Function):
+    @staticmethod
+    def forward(
+        ctx, input_tensor: torch.Tensor, tp_group: dist.ProcessGroup
+    ) -> torch.Tensor:
+        if tp_group is None:
+            return input_tensor
+
+        ctx.tp_group = tp_group
+
+        # (batch_size, seq_len, embed_dim) -> (seq_len, batch_size, embed_dim)
+        transposed_input = input_tensor.transpose(0, 1).contiguous()
+
+        seq_len, batch_size, embed_dim = transposed_input.shape
+        partition_seq_len = seq_len // dist.get_world_size(group=tp_group)
+
+        output = torch.empty(
+            (partition_seq_len, batch_size, embed_dim),
+            dtype=input_tensor.dtype,
+            device=input_tensor.device,
+        )
+        dist.reduce_scatter_tensor(
+            output,
+            transposed_input,
+            op=dist.ReduceOp.SUM,
+            group=tp_group,
+        )
+
+        # Transpose back to standard format: (batch, partition_seq_len, hidden_dim)
+        return output.transpose(0, 1).contiguous()
+
+    @staticmethod
+    def backward(ctx, *grad_outputs: torch.Tensor) -> tuple[torch.Tensor, Any]:
+        grad_output = grad_outputs[0]
+        tp_group = ctx.tp_group
+        if tp_group is None:
+            return grad_output, None
+
+        transposed_grad = grad_output.transpose(0, 1).contiguous()
+        partition_seq_len, batch_size, embed_dim = transposed_grad.shape
+
+        world_size = dist.get_world_size(group=tp_group)
+        full_seq_len = partition_seq_len * world_size
+
+        gathered_grad = torch.empty(
+            (full_seq_len, batch_size, embed_dim),
+            dtype=grad_output.dtype,
+            device=grad_output.device,
+        )
+
+        dist.all_gather_into_tensor(gathered_grad, transposed_grad, group=tp_group)
+
+        return gathered_grad.transpose(0, 1).contiguous(), None
+
+
 def copy_to_tensor_model_parallel_region(input_tensor, tp_group):
     """
     Use this right before a ColumnParallelLinear layer.
@@ -67,3 +179,17 @@ def reduce_from_tensor_model_parallel_region(input_tensor, tp_group):
     Use this right after a RowParallelLinear layer's matrix multiplication.
     """
     return _ReduceFromModelParallelRegion.apply(input_tensor, tp_group)
+
+
+def gather_from_sequence_parallel_region(input_tensor, tp_group):
+    """
+    Use this right before a ParallelAttention layer.
+    """
+    return _GatherFromSequenceParallelRegion.apply(input_tensor, tp_group)
+
+
+def reduce_scatter_to_sequence_parallel_region(input_tensor, tp_group):
+    """
+    Use this right after a ParallelAttention layer.
+    """
+    return _ReduceScatterToSequenceParallelRegion.apply(input_tensor, tp_group)
