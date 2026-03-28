@@ -50,6 +50,9 @@ llm/
 │   │   ├── distributed_data_parallel.py    # Distributed data parallelism
 │   │   ├── zero_redundancy_optimizer.py    # Zero redundancy optimizer (ZeRO-1)
 │   │   ├── fully_sharded_data_parallel.py  # Fully sharded data parallelism (ZeRO-2/3)
+│   │   ├── pipelining/
+│   │   │   ├── stage.py                    # Pipeline stage runtime with send/recv
+│   │   │   └── schedules.py                # GPipe and 1F1B pipeline schedules
 │   │   └── tensor_parallel/
 │   │       ├── __init__.py
 │   │       ├── parallel_tensor_ops.py      # TP autograd collective ops
@@ -250,6 +253,22 @@ This mode is implemented directly in `ColumnParallelLinear` and `RowParallelLine
 - `RowParallelLinear(sequence_parallel=True)`: applies the local row-partitioned linear, then uses `reduce_scatter_to_sequence_parallel_region(...)` to return a sequence-partitioned output.
 
 These operations are backed by custom autograd mappings in `src/distributed/tensor_parallel/parallel_tensor_ops.py`, so forward/backward communication is handled explicitly for sequence-sharded activations.
+
+### Pipeline Parallelism
+The project now includes a from-scratch pipeline runtime in `src/distributed/pipelining/` with two core components:
+
+- `PipelineStage` (`stage.py`): wraps the module partition assigned to each rank, tracks neighbors (`prev_rank` / `next_rank`), and stores `(input, output)` activation pairs in a FIFO queue for delayed backward.
+- `ScheduleGPipe` and `Schedule1F1B` (`schedules.py`): orchestrate microbatch execution across stages.
+
+Current scheduling support:
+- **GPipe schedule:** runs all forward microbatches first, then runs backward in reverse order.
+- **1F1B schedule:** runs warmup forward passes, then steady-state one-forward/one-backward interleaving, followed by cooldown backward passes.
+
+Communication and loss flow:
+- Non-first stages receive activations from upstream with point-to-point `recv`, compute local forward, then send activations downstream.
+- Non-last stages receive downstream gradients and backpropagate through cached local activations.
+- The last stage computes per-microbatch cross-entropy loss and triggers backward.
+- The first stage provides global inputs and the last stage provides global targets, both chunked into microbatches.
 
 ## ⏱️ Profiling & Performance
 Because this project is heavily focused on systems optimization, profiling tools are used extensively to identify and eliminate CPU, I/O, and memory bottlenecks.
