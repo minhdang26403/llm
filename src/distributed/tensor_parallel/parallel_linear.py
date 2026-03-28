@@ -4,17 +4,24 @@ import torch.nn as nn
 
 from .parallel_tensor_ops import (
     copy_to_tensor_model_parallel_region,
+    gather_from_sequence_parallel_region,
     reduce_from_tensor_model_parallel_region,
+    reduce_scatter_to_sequence_parallel_region,
 )
 
 
 class ColumnParallelLinear(nn.Module):
     def __init__(
-        self, in_features: int, out_features: int, tp_group: dist.ProcessGroup
+        self,
+        in_features: int,
+        out_features: int,
+        tp_group: dist.ProcessGroup,
+        sequence_parallel: bool = False,
     ):
         super().__init__()
 
         self.tp_group = tp_group
+        self.sequence_parallel = sequence_parallel
         self.tp_world_size = dist.get_world_size(group=tp_group)
 
         assert out_features % self.tp_world_size == 0, (
@@ -28,17 +35,26 @@ class ColumnParallelLinear(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x_parallel = copy_to_tensor_model_parallel_region(x, self.tp_group)
+        if self.sequence_parallel:
+            # Gather the sliced sequence back into a full sequence
+            x_parallel = gather_from_sequence_parallel_region(x, self.tp_group)
+        else:
+            x_parallel = copy_to_tensor_model_parallel_region(x, self.tp_group)
         return self.linear(x_parallel)
 
 
 class RowParallelLinear(nn.Module):
     def __init__(
-        self, in_features: int, out_features: int, tp_group: dist.ProcessGroup
+        self,
+        in_features: int,
+        out_features: int,
+        tp_group: dist.ProcessGroup,
+        sequence_parallel: bool = False,
     ):
         super().__init__()
 
         self.tp_group = tp_group
+        self.sequence_parallel = sequence_parallel
         self.tp_world_size = dist.get_world_size(group=tp_group)
 
         assert in_features % self.tp_world_size == 0, (
@@ -53,4 +69,12 @@ class RowParallelLinear(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         out_parallel = self.linear(x)
-        return reduce_from_tensor_model_parallel_region(out_parallel, self.tp_group)
+
+        if self.sequence_parallel:
+            # Reduce scatter across the sequence dimension to get the partitioned output
+            return reduce_scatter_to_sequence_parallel_region(
+                out_parallel, self.tp_group
+            )
+        else:
+            # AllReduce across the model parallel dimension to get the full output
+            return reduce_from_tensor_model_parallel_region(out_parallel, self.tp_group)
