@@ -32,6 +32,9 @@ The codebase is strictly separated into modular components, isolating the offlin
 
 ```text
 llm/
+├── apps/                           # Sample distributed launch scripts
+│   ├── ddp_train.py
+│   └── fsdp_train.py
 ├── data/                           # Raw text and pretokenized .bin datasets
 ├── perf/                           # Profiling artifacts and reports
 ├── src/
@@ -42,10 +45,20 @@ llm/
 │   ├── dataset.py                  # Memmap dataset over pretokenized token IDs
 │   ├── train.py                    # Model training entrypoint (GPT/Llama)
 │   ├── generate.py                 # Interactive generation CLI (GPT/Llama)
+│   ├── distributed/                # Distributed training and parallelism
+│   │   ├── __init__.py             # Public distributed API exports
+│   │   ├── distributed_data_parallel.py
+│   │   ├── zero_redundancy_optimizer.py
+│   │   ├── fully_sharded_data_parallel.py
+│   │   └── tensor_parallel/
+│   │       ├── __init__.py
+│   │       ├── mappings.py         # TP autograd collective mappings
+│   │       └── layers.py           # TP linear/attention/FFN layers
 │   ├── models/
 │   │   ├── config.py               # Model config classes and defaults
 │   │   ├── gpt.py                  # GPT model and blocks
-│   │   └── llama.py                # Llama model and blocks
+│   │   ├── llama.py                # Llama model and blocks
+│   │   └── parallel_llama.py       # Tensor-parallel Llama model and blocks
 │   └── layers/                     # Reusable building blocks
 │       ├── attention.py            # Causal attention, GQA/MQA support
 │       ├── positional_embedding.py # Sinusoidal + RoPE
@@ -148,31 +161,6 @@ The training loop includes built-in scaffolding for periodic validation against 
 
 During training, model checkpoints are saved to the `checkpoints/` directory by default (or a custom path via `--output-dir`). These artifacts can be loaded later to resume training from an exact step or to perform offline text generation.
 
-### Distributed Training
-The project also implements the following classes to support distributed training:
-- `DistributedDataParallel`: Standard Data Parallelism. A global batch of size $B$ will be sharded across nodes into mini-batches, each of size $B/ N$ where $N$ is the number of node. The model is entirely replicated, that is, each node in the cluster holds a 100% identical copy of the model weights.
-- `ZeroRedundancyOptimizer`: The Zero Redundancy Optimizer proposed in the paper [ZeRO: Memory Optimizations Toward Training Trillion Parameter Models](https://arxiv.org/abs/1910.02054). This class implements ZeRO-1 variant, which only shards the optimizer state.
-- `FullyShardedDataParallel`: This class supports two mode: shards gradients only or shards both gradients and model's weights. When using `FullyShardedDataParallel` along standard optimizer like Adam, we can achieve ZeRO-2 or ZeRO-3 depending on the sharding strategy we give `FullyShardedDataParallel`.
-
-Summary:
-- DDP + ZeroRedundancyOptimizer = ZeRO-1 (Optimizer State Partitioning)
-- FSDP + Standard Optimizer + SHARD_GRAD_OP sharding strategy = ZeRO-2
-- FSDP + Standard Optimizer + FULL_SHARD sharding strategy = ZeRO-3
-
-Note that we cannot use `ZeroRedundancyOptimizer` with FSDP since FSDP already shards the model weights and gradients, and its sharding is incompatiable with how the `ZeroRedundancyOptimizer` shards the optimizer state.
-
-There are two sample training scripts that use these containers:
-
-1. Training with Distributed Data Parallelism
-```bash
-GLOO_SOCKET_IFNAME=lo0 GLOO_DISABLE_IPV6=1 torchrun --nproc_per_node=2 apps/ddp_train.py
-```
-
-2. Training with Fully Sharded Data Parallelism
-```bash
-GLOO_SOCKET_IFNAME=lo0 GLOO_DISABLE_IPV6=1 torchrun --nproc_per_node=2 apps/fsdp_train.py
-```
-
 ## 🔮 Inference & Generation
 The repository now includes an end-to-end text generation pipeline in `src/generate.py`. It loads trained checkpoints, restores the tokenizer, and serves an interactive CLI for both GPT and Llama variants.
 
@@ -205,6 +193,52 @@ Notes:
 - Generation currently uses a context window of `256` tokens.
 - Prompts longer than the context window are rejected with a validation error.
 - Decoding stops early if `<|endoftext|>` is generated.
+
+## Distributed Training and Distributed Inference
+### Data Parallelism
+The project also implements the following classes to support distributed training:
+- `DistributedDataParallel`: Standard Data Parallelism. A global batch of size $B$ will be sharded across nodes into mini-batches, each of size $B/ N$ where $N$ is the number of node. The model is entirely replicated, that is, each node in the cluster holds a 100% identical copy of the model weights.
+- `ZeroRedundancyOptimizer`: The Zero Redundancy Optimizer proposed in the paper [ZeRO: Memory Optimizations Toward Training Trillion Parameter Models](https://arxiv.org/abs/1910.02054). This class implements ZeRO-1 variant, which only shards the optimizer state.
+- `FullyShardedDataParallel`: This class supports two mode: shards gradients only or shards both gradients and model's weights. When using `FullyShardedDataParallel` along standard optimizer like Adam, we can achieve ZeRO-2 or ZeRO-3 depending on the sharding strategy we give `FullyShardedDataParallel`.
+
+Summary:
+- DDP + ZeroRedundancyOptimizer = ZeRO-1 (Optimizer State Partitioning)
+- FSDP + Standard Optimizer + SHARD_GRAD_OP sharding strategy = ZeRO-2
+- FSDP + Standard Optimizer + FULL_SHARD sharding strategy = ZeRO-3
+
+Note that we cannot use `ZeroRedundancyOptimizer` with FSDP since FSDP already shards the model weights and gradients, and its sharding is incompatiable with how the `ZeroRedundancyOptimizer` shards the optimizer state.
+
+There are two sample training scripts that use these containers:
+
+1. Training with Distributed Data Parallelism
+```bash
+GLOO_SOCKET_IFNAME=lo0 GLOO_DISABLE_IPV6=1 torchrun --nproc_per_node=2 apps/ddp_train.py
+```
+
+2. Training with Fully Sharded Data Parallelism
+```bash
+GLOO_SOCKET_IFNAME=lo0 GLOO_DISABLE_IPV6=1 torchrun --nproc_per_node=2 apps/fsdp_train.py
+```
+
+### Tensor Parallelism
+
+To complement data parallel training, the project now includes a from-scratch Tensor Parallel (TP) stack under `src/distributed/tensor_parallel/`.
+
+Implemented TP primitives:
+- `ColumnParallelLinear`: Shards a linear layer by output features across TP ranks. Each rank computes a partial output slice.
+- `RowParallelLinear`: Shards a linear layer by input features across TP ranks. Partial outputs are reduced across ranks.
+- `copy_to_tensor_model_parallel_region` / `reduce_from_tensor_model_parallel_region`: Custom autograd mappings that insert collective communication in the correct forward/backward phases.
+
+Implemented TP transformer blocks:
+- `ParallelAttention`: Tensor-parallel self-attention with sharded Q/K/V projections, local head partitions, and reduced output projection.
+- `ParallelSwiGLU`: Tensor-parallel SwiGLU MLP using column-parallel gate/value projections and row-parallel output projection.
+- `ParallelLlama` and `ParallelLlamaBlock` (`src/models/parallel_llama.py`): A Llama variant where each block uses TP-native attention and FFN layers.
+
+Conceptually:
+- **Data Parallelism (DDP/FSDP):** Replicates or shards model state across ranks, but each rank still executes full layer math for its partition.
+- **Tensor Parallelism:** Splits the math *inside each layer* across ranks and communicates partial activations/gradients during forward/backward.
+
+This TP implementation is designed to be composable with the rest of the distributed infrastructure, enabling hybrid strategies such as DP + TP for larger models.
 
 ## ⏱️ Profiling & Performance
 Because this project is heavily focused on systems optimization, profiling tools are used extensively to identify and eliminate CPU, I/O, and memory bottlenecks.
